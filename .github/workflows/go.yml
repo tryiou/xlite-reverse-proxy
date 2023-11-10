@@ -47,10 +47,10 @@ jobs:
       with:
         name: artifacts
         path: |
-          xlite-reverse-proxy/build/xlite-reverse-proxy_windows-amd64.exe
-          xlite-reverse-proxy/build/xlite-reverse-proxy_windows-arm64.exe
-          xlite-reverse-proxy/build/xlite-reverse-proxy_linux-amd64
-          xlite-reverse-proxy/build/xlite-reverse-proxy_linux-arm64
-          xlite-reverse-proxy/build/xlite-reverse-proxy_macos-amd64
-          xlite-reverse-proxy/build/xlite-reverse-proxy_macos-arm64
+          build/xlite-reverse-proxy_windows-amd64.exe
+          build/xlite-reverse-proxy_windows-arm64.exe
+          build/xlite-reverse-proxy_linux-amd64
+          build/xlite-reverse-proxy_linux-arm64
+          build/xlite-reverse-proxy_macos-amd64
+          build/xlite-reverse-proxy_macos-arm64
     #   run: go test -v ./...
