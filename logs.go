@@ -52,7 +52,7 @@ func rotateLogFile() error {
 
 	// Rename the current log file with a timestamp suffix
 	timestamp := time.Now().Format("20060102150405")
-	backupFilePath := filepath.Join("logs", "logs_"+timestamp+".txt")
+	backupFilePath := "logs_" + timestamp + ".txt"
 	err := os.Rename("logs.txt", backupFilePath)
 	if err != nil {
 		return err
