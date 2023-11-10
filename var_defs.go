@@ -23,24 +23,6 @@ var serversJsonList = `
 
 ]
 `
-
-/*
-
-	{
-		"url": "https://utils.blocknet.org",
-		"exr": true
-	},
-
-	{
-		"url": "http://149.102.153.235",
-		"exr": true
-	},
-	{
-		"url": "http://149.102.153.235",
-		"exr": true
-	},
-*/
-
 var acceptedPaths = []string{
 	"/",
 	"/height",
