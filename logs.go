@@ -16,7 +16,7 @@ var (
 
 func initLogger() {
 	var err error
-	logFile, err = os.OpenFile("logs/logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err = os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func rotateLogFile() error {
 	// Rename the current log file with a timestamp suffix
 	timestamp := time.Now().Format("20060102150405")
 	backupFilePath := filepath.Join("logs", "logs_"+timestamp+".txt")
-	err := os.Rename("logs/logs.txt", backupFilePath)
+	err := os.Rename("logs.txt", backupFilePath)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func rotateLogFile() error {
 		return err
 	}
 	// Create a new log file
-	logFile, err = os.OpenFile("logs/logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err = os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
