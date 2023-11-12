@@ -57,6 +57,6 @@ const maxBlockTimeDiff = 3600 * 2
 var httpTimeout = 8
 
 // Create a rate limiter with a limit of x requests per minute
-var rateLimit = 80
+var rateLimit = 100
 
 const maxLogSize = 50 * 1024 * 1024 // 50 MB
