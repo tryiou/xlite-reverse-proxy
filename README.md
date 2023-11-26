@@ -7,7 +7,7 @@ Endpoint can then be used for xlite-daemon and will relay calls/answers to serve
 
 optional launch parameter:
 
-    "-dynlist=true" use dynamic servers list parsed from "https://utils.blocknet.org/xrs/xrshowconfigs" 
+    "-dynlist=true"  # use dynamic servers list parsed from "https://utils.blocknet.org/xrs/xrshowconfigs" 
 #todo: P2P access to this call 
 
 # Build instructions:
