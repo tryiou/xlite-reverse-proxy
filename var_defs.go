@@ -9,15 +9,7 @@ import "sync"
 var serversJsonList = `
 [	
 	{
-		"url": "https://utils.blocknet.org",
-		"exr": true
-	},
-	{
-		"url": "http://149.102.153.235",
-		"exr": true
-	},
-	{
-		"url": "http://exrproxy3.airdns.org:42114",
+		"url": "http://exrproxy1.airdns.org:42114",
 		"exr": true
 	}
 
