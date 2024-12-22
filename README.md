@@ -2,6 +2,8 @@
 Reverse proxy daemon to use as endpoint for xlite-daemon \
 https://github.com/blocknetdx/xlite-daemon 
 
+
+![Image Description](.github/image.png)
 Script create a http server listening on 0.0.0.0:11111 \
 Then relay clients requests to servers in list set in configuration. \
 default use static servers list, set in "var_defs.go", "serversJsonList". \
