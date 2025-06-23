@@ -21,8 +21,8 @@
 # Go workspace file
 go.work
 
-logs/*
-build/*
+logs*
+build*
 .aider*
 .env
 config.yaml
