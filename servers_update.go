@@ -1,5 +1,3 @@
-// Parsing the xrshowconfigs call
-
 package main
 
 import (
@@ -267,7 +265,7 @@ func UpdateServersFromJSON(servers *Servers) {
 }
 
 func updateServers(servers *Servers) {
-	for _, xrShowConfigs_serverURL := range config.XrshowconfigsServers {
+	for _, xrShowConfigs_serverURL := range config.Dynlist_servers_providers {
 		dynServersJson := parseXrshowconfigs(xrShowConfigs_serverURL)
 		if dynServersJson == "" {
 			logger.Printf("|SERVERS_UPDATE| No valid servers found from URL: %s", xrShowConfigs_serverURL)

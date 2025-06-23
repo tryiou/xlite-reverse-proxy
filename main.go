@@ -48,7 +48,7 @@ func main() {
 	}
 
 	if *dynlist_bool {
-		// Dynamic server pick from xrshowconfigs and goroutine updating it every 5 min, remove/add servers on the fly
+		// Dynamic servers list from Dynlist_servers_providers and goroutine updating it every 5 min, remove/add servers on the fly
 		startServerUpdateRoutine(&servers)
 	} else {
 		// Static servers list

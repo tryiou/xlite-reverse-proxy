@@ -8,21 +8,21 @@ import (
 )
 
 type Config struct {
-	XrshowconfigsServers []string                 `yaml:"xrshowconfigs_servers"`
-	ServersMap           []map[string]interface{} `yaml:"servers_map"`
-	AcceptedPaths        []string                 `yaml:"accepted_paths"`
-	AcceptedMethods      []string                 `yaml:"accepted_methods"`
-	MaxStoredBlocks      int                      `yaml:"max_stored_blocks"`
-	MaxBlockTimeDiff     int                      `yaml:"max_block_time_diff"`
-	HttpTimeout          int                      `yaml:"http_timeout"`
-	RateLimit            int                      `yaml:"rate_limit"`
-	MaxLogSize           int                      `yaml:"max_log_size"`
+	Dynlist_servers_providers []string                 `yaml:"dynlist_servers_providers"`
+	ServersMap                []map[string]interface{} `yaml:"servers_map"`
+	AcceptedPaths             []string                 `yaml:"accepted_paths"`
+	AcceptedMethods           []string                 `yaml:"accepted_methods"`
+	MaxStoredBlocks           int                      `yaml:"max_stored_blocks"`
+	MaxBlockTimeDiff          int                      `yaml:"max_block_time_diff"`
+	HttpTimeout               int                      `yaml:"http_timeout"`
+	RateLimit                 int                      `yaml:"rate_limit"`
+	MaxLogSize                int                      `yaml:"max_log_size"`
 }
 
 var config Config
 
 func initConfig() {
-	configFile := "config.yaml"
+	configFile := "xlite-reverse-proxy-config.yaml"
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		log.Println("Config file does not exist. Creating default config.")
@@ -35,7 +35,7 @@ func initConfig() {
 
 func createDefaultConfig(configFile string) {
 	defaultConfig := Config{
-		XrshowconfigsServers: []string{
+		Dynlist_servers_providers: []string{
 			"https://utils.blocknet.org",
 			"http://exrproxy1.airdns.org:42114",
 		},
@@ -73,13 +73,13 @@ func createDefaultConfig(configFile string) {
 		MaxLogSize:       50 * 1024 * 1024, // 50 MB
 	}
 
-	log.Printf("Default config before marshalling: %+v\n", defaultConfig)
+	// log.Printf("Default config before marshalling: %+v\n", defaultConfig)
 
 	data, err := yaml.Marshal(defaultConfig)
 	if err != nil {
 		log.Fatalf("Failed to create default config: %v", err)
 	}
-	log.Printf("Marshalled YAML data: %s\n", string(data))
+	// log.Printf("Marshalled YAML data: %s\n", string(data))
 
 	err = os.WriteFile(configFile, data, 0644)
 	if err != nil {

@@ -25,4 +25,4 @@ logs*
 build*
 .aider*
 .env
-config.yaml
+xlite-reverse-proxy-config.yaml
