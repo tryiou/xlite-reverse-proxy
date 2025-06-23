@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -26,18 +25,22 @@ type JsonResponse struct {
 }
 
 func getRawContentFromURL(url string) (string, error) {
+	logger.Printf("|SERVERS_UPDATE| Fetching content from URL: %s", url)
 	resp, err := http.Get(url)
 
 	if err != nil {
+		logger.Printf("|SERVERS_UPDATE| Error fetching config from URL %s: %v", url, err)
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Printf("|SERVERS_UPDATE| Error reading response body from URL %s: %v", url, err)
 		return "", err
 	}
 
+	logger.Printf("|SERVERS_UPDATE| Successfully fetched content from URL: %s", url)
 	return string(content), nil
 }
 
@@ -70,7 +73,11 @@ func parseConfig(config string) map[string]map[string]string {
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Println("Error parsing config:", err)
+		logger.Printf("|SERVERS_UPDATE| Error parsing config: %v", err)
+	}
+
+	if configMap["Main"] == nil || configMap["Main"]["plugins"] == "" {
+		logger.Printf("|SERVERS_UPDATE| Error: Missing 'plugins' key in config for server")
 	}
 
 	return configMap
@@ -114,6 +121,7 @@ func findMissingPlugins(acceptedMethods, plugins_lst []string) []string {
 }
 
 func filterServersByPlugins(elements []JsonElement, serverURL string) (string, error) {
+	logger.Printf("|SERVERS_UPDATE| Filtering servers by plugins with base URL: %s", serverURL)
 	var serversJSON []map[string]interface{}
 	serverObj := map[string]interface{}{
 		"url": serverURL,
@@ -137,9 +145,11 @@ func filterServersByPlugins(elements []JsonElement, serverURL string) (string, e
 
 	jsonBytes, err := json.Marshal(serversJSON)
 	if err != nil {
+		logger.Printf("|SERVERS_UPDATE| Error marshalling JSON: %v", err)
 		return "", err
 	}
 
+	logger.Printf("|SERVERS_UPDATE| Successfully filtered servers by plugins")
 	return string(jsonBytes), nil
 }
 
@@ -149,21 +159,19 @@ func parseXrshowconfigs(xrShowConfigs_serverURL string) string {
 	var successfulServerURL string
 
 	fullURL := xrShowConfigs_serverURL + "/xrs/xrshowconfigs"
+	logger.Printf("|SERVERS_UPDATE| Parsing Xrshowconfigs from URL: %s", fullURL)
 	rawContent, err = getRawContentFromURL(fullURL)
 	if err == nil {
 		successfulServerURL = xrShowConfigs_serverURL
-		fmt.Println("Xrshowconfigs URL:", successfulServerURL)
-	}
-	fmt.Println("Error getting content from URL:", xrShowConfigs_serverURL, err)
-
-	if err != nil {
+		logger.Printf("|SERVERS_UPDATE| Xrshowconfigs URL: %s", successfulServerURL)
+	} else {
 		return ""
 	}
 
 	var response JsonResponse
 	err = json.Unmarshal([]byte(rawContent), &response)
 	if err != nil {
-		fmt.Println("Error unmarshalling JSON:", err)
+		logger.Printf("|SERVERS_UPDATE| Error unmarshalling JSON: %v", err)
 		return ""
 	}
 
@@ -172,40 +180,49 @@ func parseXrshowconfigs(xrShowConfigs_serverURL string) string {
 	var elements []JsonElement
 	err = json.Unmarshal([]byte(jsonArrayOfString), &elements)
 	if err != nil {
-		fmt.Println("Error unmarshalling result JSON:", err)
+		logger.Printf("|SERVERS_UPDATE| Error unmarshalling result JSON: %v", err)
 		return ""
 	}
 
+	readyCount, notReadyCount := 0, 0
+
 	for i, elem := range elements {
+		serverID := i + 1
 		configMap := parseConfig(elem.Config)
 		plugins_lst := strings.Split(configMap["Main"]["plugins"], ",")
-		fmt.Printf("SNODE %d:\n", i+1)
-		fmt.Printf("NodePubKey: %s\n", elem.NodePubKey)
-		fmt.Println(configMap["Main"]["host"], configMap["Main"]["port"])
-		if areAllPluginsPresent(config.AcceptedMethods, plugins_lst) {
-			fmt.Println("READY FOR XLITE")
-			//fmt.Printf("PaymentAddress: %s\n", elem.PaymentAddress)
-			//fmt.Println("Config:")
-		} else {
-			fmt.Println("NOT READY FOR XLITE")
-			//fmt.Println(plugins_lst)
-			// Find missing plugins
+
+		logger.Printf("|SERVERS_UPDATE| Server %d: NodePubKey=%s, Host=%s:%s, Plugins=%v, Status: %s",
+			serverID, elem.NodePubKey, configMap["Main"]["host"], configMap["Main"]["port"],
+			plugins_lst,
+			func() string {
+				if areAllPluginsPresent(config.AcceptedMethods, plugins_lst) {
+					readyCount++
+					return "READY FOR XLITE"
+				}
+				notReadyCount++
+				return "NOT READY FOR XLITE"
+			}())
+
+		if !areAllPluginsPresent(config.AcceptedMethods, plugins_lst) {
 			missingPlugins := findMissingPlugins(config.AcceptedMethods, plugins_lst)
-			fmt.Println("Missing Plugins:")
-			fmt.Println(missingPlugins)
+			logger.Printf("|SERVERS_UPDATE| Server %d: Missing Plugins: %v", serverID, missingPlugins)
 		}
-		fmt.Println()
-	}
-	filteredServersJson, err := filterServersByPlugins(elements, successfulServerURL)
-	if err != nil {
-		fmt.Println("Error filtering servers:", err)
 	}
 
+	filteredServersJson, err := filterServersByPlugins(elements, successfulServerURL)
+	if err != nil {
+		logger.Printf("|SERVERS_UPDATE| Error filtering servers: %v", err)
+		return ""
+	}
+
+	logger.Printf("|SERVERS_UPDATE| Parsed %d servers. %d are READY FOR XLITE, %d are NOT READY FOR XLITE",
+		len(elements), readyCount, notReadyCount)
+
+	logger.Printf("|SERVERS_UPDATE| Successfully parsed Xrshowconfigs")
 	return string(filteredServersJson)
 }
 
 func UpdateServersFromJSON(servers *Servers) {
-	// Now using config.serversJsonList directly as slice
 	serverConfigs := config.ServersMap
 
 	existingServers := make(map[string]bool)
@@ -213,13 +230,15 @@ func UpdateServersFromJSON(servers *Servers) {
 		existingServers[server.url] = false
 	}
 
+	logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Received server map: %v", serverConfigs)
+
 	// Iterate over slice directly
 	for _, serverCfg := range serverConfigs {
 		url, _ := serverCfg["url"].(string)
 		exr, _ := serverCfg["exr"].(bool)
 
 		if server, ok := servers.serverGetByURL(url); ok {
-			logger.Printf("|SERVERS|_UpdateServersFromJSON, Updating server: URL=%s, EXR=%v\n", url, exr)
+			logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Updating server[%d]: URL=%s, EXR=%v", server.id, url, exr)
 			mu.Lock()
 			server.url = url
 			server.exr = exr
@@ -230,7 +249,7 @@ func UpdateServersFromJSON(servers *Servers) {
 				exr: exr,
 			}
 			id := servers.serverAdd(newServer)
-			logger.Printf("|SERVERS|_UpdateServersFromJSON, Adding new server[%d]: URL=%s, EXR=%v\n", id, url, exr)
+			logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Adding new server[%d]: URL=%s, EXR=%v", id, url, exr)
 		}
 
 		existingServers[url] = true
@@ -239,22 +258,25 @@ func UpdateServersFromJSON(servers *Servers) {
 	for i := len(servers.Slice) - 1; i >= 0; i-- {
 		server := servers.Slice[i]
 		if !existingServers[server.url] {
-			logger.Printf("|SERVERS|_UpdateServersFromJSON, Removing server: URL=%s\n", server.url)
+			logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Removing server[%d]: URL=%s", server.id, server.url)
 			servers.serverRemove(server)
 		}
 	}
+
+	logger.Printf("Successfully updated servers from JSON")
 }
 
 func updateServers(servers *Servers) {
 	for _, xrShowConfigs_serverURL := range config.XrshowconfigsServers {
 		dynServersJson := parseXrshowconfigs(xrShowConfigs_serverURL)
 		if dynServersJson == "" {
+			logger.Printf("|SERVERS_UPDATE| No valid servers found from URL: %s", xrShowConfigs_serverURL)
 			continue
 		}
 
 		var serverConfigs []map[string]interface{}
 		if err := json.Unmarshal([]byte(dynServersJson), &serverConfigs); err != nil {
-			logger.Println("|SERVERS|_updateServers, JSON unmarshal error:", err)
+			logger.Printf("|SERVERS_UPDATE|_updateServers, JSON unmarshal error: %v", err)
 			continue
 		}
 
@@ -265,11 +287,13 @@ func updateServers(servers *Servers) {
 }
 
 func startServerUpdateRoutine(servers *Servers) {
+	logger.Printf("|SERVERS_UPDATE| Starting server update routine")
 
 	updateServers(servers)
 	go func() {
 		for {
 			time.Sleep(5 * time.Minute)
+			logger.Printf("|SERVERS_UPDATE| Sleeping for 5 minutes before next update")
 			updateServers(servers)
 		}
 	}()
