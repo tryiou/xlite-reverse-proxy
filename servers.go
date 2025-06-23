@@ -153,7 +153,7 @@ func (servers *Servers) updatesCoinsMaps() error {
 													BlockHash: getBlockHash,
 													timeDiff:  timeDifference,
 												}
-												purgeCache(blockCache, maxStoredBlocks)
+												purgeCache(blockCache, config.MaxStoredBlocks)
 
 											}
 										}
@@ -165,7 +165,7 @@ func (servers *Servers) updatesCoinsMaps() error {
 								blockCacheKey := fmt.Sprintf("%s_%s", coinStr, getBlockHash)
 								blockDataCache := blockCache[blockCacheKey]
 								if blockDataCache != nil {
-									if blockDataCache.timeDiff < maxBlockTimeDiff {
+									if blockDataCache.timeDiff < float64(config.MaxBlockTimeDiff) {
 										coinMap.getBlockHash = getBlockHash
 										coinMap.timeDiff = blockDataCache.timeDiff
 									} else {
@@ -500,7 +500,7 @@ func (s *Server) pruneHashStorage() {
 func (s *Server) server_GetPing() error {
 	payloadMethod := "ping"
 	payloadParams := []interface{}{}
-	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, httpTimeout)
+	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		s.ping = 0
 		s.coinsMap = make(map[string]Coin)
@@ -541,7 +541,7 @@ func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value
 	payloadMethod := "getblock"
 	payloadParams := []interface{}{coin, blockHash, "true"}
 	//fmt.Printf("payloadParams: %q\n", payloadParams)
-	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, httpTimeout)
+	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("server_GetBlock: failed to make HTTP request: %w", err)
 	}
@@ -573,7 +573,7 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 		logger.Printf("server_GetBlockHash called with height = -1, server:%d,%s,%d", s.id, coin, height)
 		return "", nil
 	}
-	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, httpTimeout)
+	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		return "", fmt.Errorf("server_GetBlockHash: failed to make HTTP request: %w", err)
 	}
@@ -594,7 +594,7 @@ func (s *Server) server_GetFees() error {
 	payloadMethod := "fees"
 	payloadParams := []interface{}{}
 
-	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, httpTimeout)
+	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
 		return fmt.Errorf("server_GetFees, failed to make HTTP request: %w", err)
@@ -611,7 +611,7 @@ func (s *Server) server_GetFees() error {
 func (s *Server) server_GetHeights() error {
 	payloadMethod := "heights"
 	payloadParams := []interface{}{}
-	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, httpTimeout)
+	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
 		return fmt.Errorf("server_GetHeights, failed to make HTTP request: %w", err)
@@ -854,26 +854,6 @@ func containsID(ids []int, id int) bool {
 	}
 	return false
 }
-
-/*func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
-	consensus := fastjson.MustParse(`{"result": {}, "error": null}`)
-	for _, elementCounts := range counts {
-		totalServers := 0
-		for _, count := range elementCounts {
-			totalServers += count
-		}
-		threshold := float64(totalServers) / 3.0
-
-		for identifier, count := range elementCounts {
-			if float64(count) >= threshold {
-				parts := strings.Split(identifier, ":")
-				valueParsed, _ := fastjson.Parse(parts[1])
-				consensus.Get("result").Set(parts[0], valueParsed)
-			}
-		}
-	}
-	return consensus
-}*/
 
 func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 	consensus := fastjson.MustParse(`{"result": {}, "error": null}`)

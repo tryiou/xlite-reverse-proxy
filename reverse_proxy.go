@@ -35,20 +35,8 @@ func reverseProxy(port int, servers *Servers) {
 
 		rw.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-		/*// Apply rate limiting
-		if !limiter.Allow() {
-			errorResponse := ErrorResponse{
-				Code:  429,
-				Error: "Too Many Requests",
-			}
-			rw.WriteHeader(http.StatusTooManyRequests)
-			json.NewEncoder(rw).Encode(errorResponse)
-			logger.Printf("Rate limit exceeded for IP: %s", req.RemoteAddr)
-			return
-		}*/
-
 		ok := false
-		for _, path := range acceptedPaths {
+		for _, path := range config.AcceptedPaths {
 			if req.URL.Path == path {
 				// Process the accepted path
 				// Get out of the loop
@@ -123,7 +111,7 @@ func reverseProxy(port int, servers *Servers) {
 
 		default:
 			ok := false
-			for _, method := range acceptedMethods {
+			for _, method := range config.AcceptedMethods {
 				if requestData.Method == method {
 					// Get out of the loop
 					ok = true
@@ -153,42 +141,6 @@ func reverseProxy(port int, servers *Servers) {
 			logRequest(*server, &requestData, req.URL, startTimer)
 			// Handle the default case here
 		}
-
-		/*if req.URL.Path == "/heights" || req.URL.Path == "/height" || requestData.Method == "heights" || requestData.Method == "height" {
-			// Return the value of g_getheights as the response
-			response := servers.g_getheights
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
-				return
-			}
-
-			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request heights relayed OK from cache, exec_timer:%s\n", requestData.Ip, elapsedTimer)
-			return
-		} else if req.URL.Path == "/fees" || requestData.Method == "fees" {
-			// Return the value of g_getfees as the response
-			response := servers.g_getfees
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
-				return
-			}
-
-			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request fees relayed OK from cache, exec_timer:%s\n", requestData.Ip, elapsedTimer)
-			return
-		} else if req.URL.Path == "/ping" || requestData.Method == "ping" {
-			response := fastjson.MustParse("1")
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
-				return
-			}
-			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request ping relayed OK, exec_timer:%s\n", requestData.Ip, elapsedTimer)
-			return
-		} else {*/
 
 	})
 

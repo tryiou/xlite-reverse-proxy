@@ -30,13 +30,16 @@ func (servers *Servers) timer_UpdateServersData(wg *sync.WaitGroup) {
 
 func init() {
 	initLogger()
+	initConfig()
 }
 
 func main() {
 	defer logFile.Close()
+
 	// Define a command-line flag for the launch argument
 	dynlist_bool := flag.Bool("dynlist", false, "Set to true to use dynamic server list & update routine")
 	flag.Parse()
+
 	// Create a new instance of Servers
 	servers := Servers{
 		g_getfees:         fastjson.MustParse(`{"result": null, "error": null}`),
@@ -49,10 +52,11 @@ func main() {
 		startServerUpdateRoutine(&servers)
 	} else {
 		// Static servers list
-		UpdateServersFromJSON(&servers, serversJsonList)
+		UpdateServersFromJSON(&servers)
 	}
 
 	go startGoroutines(&servers, 11111)
+
 	// Keep the main goroutine running
 	select {}
 }
