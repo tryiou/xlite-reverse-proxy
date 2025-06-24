@@ -264,6 +264,7 @@ func extractCoinFromParams(requestData RequestData) (string, error) {
 
 	//	fmt.Printf("\n\nrp, coin: %s\n\n", requestData)
 	if len(requestData.Params) > 0 {
+		// logger.Printf("requestData.Params: %s", requestData.Params)
 		firstParam, ok = requestData.Params[0].(string)
 		if !ok {
 

@@ -17,6 +17,9 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+var mu sync.Mutex
+var blockCache = make(map[string]*BlockCache)
+
 // Add server to the map
 func (servers *Servers) serverAdd(s *Server) int {
 	if servers.Slice == nil {
