@@ -17,6 +17,7 @@ type Config struct {
 	HttpTimeout               int                      `yaml:"http_timeout"`
 	RateLimit                 int                      `yaml:"rate_limit"`
 	MaxLogSize                int                      `yaml:"max_log_size"`
+	ConsensusThreshold        float64                  `yaml:"consensus_threshold"`
 }
 
 var config Config
@@ -66,11 +67,12 @@ func createDefaultConfig(configFile string) {
 			"gethistory",
 			"ping",
 		},
-		MaxStoredBlocks:  3,
-		MaxBlockTimeDiff: 7200,
-		HttpTimeout:      8,
-		RateLimit:        100,
-		MaxLogSize:       50 * 1024 * 1024, // 50 MB
+		MaxStoredBlocks:    3,
+		MaxBlockTimeDiff:   7200,
+		HttpTimeout:        8,
+		RateLimit:          100,
+		MaxLogSize:         50 * 1024 * 1024, // 50 MB
+		ConsensusThreshold: 3.0 / 2.0,
 	}
 
 	// log.Printf("Default config before marshalling: %+v\n", defaultConfig)

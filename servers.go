@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,9 +17,6 @@ import (
 
 	"github.com/valyala/fastjson"
 )
-
-var mu sync.Mutex
-var blockCache = make(map[string]*BlockCache)
 
 // Add server to the map
 func (servers *Servers) serverAdd(s *Server) int {
@@ -594,7 +592,7 @@ func findNonConsensusGetBlockHashes(servers *Servers) map[string][]int {
 		for hash, count := range counts {
 			ratio := float64(len(count)) / float64(total)
 			//logger.Print("count", count, ratio)
-			if ratio >= 2.0/3.0 {
+			if ratio >= config.ConsensusThreshold {
 				consensusMap[coin] = hash
 				//logger.Printf("consensus! %s: %s", coin, hash)
 			} else {
@@ -640,12 +638,7 @@ func hashExistsInStorage(storage map[int]string, hash string) bool {
 
 // Helper function to check if a server ID is present in the slice
 func containsID(ids []int, id int) bool {
-	for _, val := range ids {
-		if val == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ids, id)
 }
 
 func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
@@ -670,7 +663,7 @@ func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 
 		for identifier, count := range elementCounts {
 			threshold := float64(count) / float64(totalServers)
-			if threshold >= 2.0/3.0 {
+			if threshold >= config.ConsensusThreshold {
 				parts := strings.Split(identifier, ":")
 				valueParsed, _ := fastjson.Parse(parts[1])
 				consensus.Get("result").Set(parts[0], valueParsed)
@@ -750,8 +743,8 @@ func calculateRatio(heightsMap map[string][]int, mostCommonHeightsRanges map[str
 		mostCommonLen := len(mostCommonHeightsRanges[key])
 
 		ratio := float64(mostCommonLen) / float64(heightsLen)
-		// Min ratio: 2.0/3.0 = 66.67 % servers agreeing on range
-		if ratio >= 2.0/3.0 {
+		// Min ratio: config.ConsensusThreshold = 66.67 % servers agreeing on range
+		if ratio >= config.ConsensusThreshold {
 			ratioMap[key] = ratio
 		} else {
 			ratioMap[key] = 0
@@ -770,7 +763,7 @@ func findCommonHeightServers(servers *Servers, mostCommonHeightsRanges map[strin
 				//logger.Print("heights = ", heights, ",ok = ", ok)
 				if containsValue(heights, coinObj.getBlockCount) {
 					//logger.Print("ratioMap(", coin, ") = ", ratioMap[coin])
-					if ratioMap[coin] >= 2.0/3.0 {
+					if ratioMap[coin] >= config.ConsensusThreshold {
 						commonHeightServers[coin] = append(commonHeightServers[coin], server.id)
 					}
 				}
@@ -782,12 +775,7 @@ func findCommonHeightServers(servers *Servers, mostCommonHeightsRanges map[strin
 }
 
 func containsValue(values []int, value int) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }
 
 func computeMostCommonHeightsRanges(heightsMap map[string][]int) map[string][]int {

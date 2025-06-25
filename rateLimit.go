@@ -59,46 +59,6 @@ func cleanupVisitors() {
 	}
 }
 
-/*
-func limit_old(next http.Handler) http.Handler {  // hard rate limit
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-		// ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		// if err != nil {
-		// 	log.Print(err.Error())
-		// 	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		// 	return
-		// }
-
-		var ip string
-		var err error
-		reqClientIP := r.Header.Get("X-Forwarded-For")
-		if reqClientIP != "" {
-			// The client IP is available in the X-Forwarded-For header
-			// Parse it if there are multiple IPs separated by commas
-			ips := strings.Split(reqClientIP, ",")
-			ip = strings.TrimSpace(ips[0])
-			// Use the clientIP variable as needed
-		} else {
-			// The X-Forwarded-For header is not present, fallback to previous method
-			ip, _, err = net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				logger.Printf("error extracting client ip from request: %v", err)
-				return
-			}
-		}
-
-		limiter := getVisitor(ip)
-		if !limiter.Allow() {
-			logger.Printf("Rate limit exceeded for IP: %s", ip)
-			http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}*/
-
 func limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var ip string

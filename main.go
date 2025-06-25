@@ -8,6 +8,9 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+var mu sync.Mutex
+var blockCache = make(map[string]*BlockCache)
+
 func startGoroutines(servers *Servers, rp_port int) {
 	var wg sync.WaitGroup
 
