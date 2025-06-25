@@ -1,12 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/valyala/fastjson"
 )
@@ -31,67 +27,6 @@ func parseJSON(data []byte) (*fastjson.Value, error) {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 	return value, nil
-}
-
-func makeHTTPRequest(s Server, httpMethod, payloadMethod string, payloadParams []interface{}, timeout int) ([]byte, error) {
-	var (
-		url     string
-		payload string
-	)
-
-	if !s.exr {
-		// DIRECT CALL TO PLUGIN_ADAPTER
-		url = s.url
-		payloadData := struct {
-			Method string        `json:"method"`
-			Params []interface{} `json:"params"`
-		}{
-			Method: payloadMethod,
-			Params: payloadParams,
-		}
-		payloadBytes, err := json.Marshal(payloadData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal payloadData to JSON: %w", err)
-		}
-		payload = string(payloadBytes)
-	} else {
-		// EXR NODE!
-		url = s.url + "/xrs/" + payloadMethod
-		payloadBytes, err := json.Marshal(payloadParams)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal payloadParams to JSON: %w", err)
-		}
-		payload = string(payloadBytes)
-	}
-
-	//timeout
-	timeoutDuration := time.Duration(timeout) * time.Second
-	http.DefaultClient.Timeout = timeoutDuration
-
-	client := &http.Client{
-		Timeout: timeoutDuration,
-	}
-	reqTimer := time.Now()
-	//elapsedTimer := time.Since(startTimer)
-	req, err := http.NewRequest(httpMethod, url, strings.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w, %v", err, time.Since(reqTimer))
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send HTTP request: %w, %v", err, time.Since(reqTimer))
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read HTTP response body: %w", err)
-	}
-
-	return body, nil
 }
 
 func purgeCache(blockCache map[string]*BlockCache, maxStoredBlocks int) {
