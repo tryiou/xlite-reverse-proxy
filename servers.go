@@ -701,7 +701,7 @@ func calculateRatio(heightsMap map[string][]int, mostCommonHeightsRanges map[str
 		mostCommonLen := len(mostCommonHeightsRanges[key])
 
 		ratio := float64(mostCommonLen) / float64(heightsLen)
-		// Min ratio: config.ConsensusThreshold = 66.67 % servers agreeing on range
+		// Min ratio: config.ConsensusThreshold = 0.66 = 66.67 % servers agreeing on range
 		if ratio >= config.ConsensusThreshold {
 			ratioMap[key] = ratio
 		} else {

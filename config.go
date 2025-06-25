@@ -72,7 +72,7 @@ func createDefaultConfig(configFile string) {
 		HttpTimeout:        8,
 		RateLimit:          100,
 		MaxLogSize:         50 * 1024 * 1024, // 50 MB
-		ConsensusThreshold: 3.0 / 2.0,
+		ConsensusThreshold: 2.0 / 3.0,        // 66% consensus rule
 	}
 
 	// log.Printf("Default config before marshalling: %+v\n", defaultConfig)
