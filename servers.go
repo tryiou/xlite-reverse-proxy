@@ -468,7 +468,6 @@ func (servers *Servers) updateServersData(wg *sync.WaitGroup) {
 
 	servers.getGlobalFees()
 	servers.getGlobalHeights()
-	// Print the updated values (optional)               {"BLOCK":{
 	logger.Printf("|SERVERS|_Heights : %v", servers.g_getheights)
 	logger.Printf("|SERVERS|_Fees    : %v", servers.g_getfees)
 	logger.Printf("|SERVERS|_Srv_IDs : %v", servers.g_coinsServersIDs)

@@ -61,7 +61,7 @@ func reverseProxy(port int, servers *Servers) {
 
 		case req.URL.Path == "/servers" || requestData.Method == "servers":
 			//	servers.g_coinsServersIDs
-			response := fastjson.MustParse(`{"result": null, "error": null}`)
+			response := getDefaultJSONResponse()
 			response.Set("result", servers.g_coinsServersIDs)
 			err := writeResponse(rw, response)
 			if err != nil {
@@ -131,15 +131,15 @@ func reverseProxy(port int, servers *Servers) {
 				logger.Printf("*error Failed to extract coin from params: %v", err)
 				return
 			}
-			//  Select server / transmit request / retry another server in case of error / relay to client
+
+			//  Select a server / transmit the request / in case of error, retry another server  / relay response to client
 			server, err := retryWithRandomValidServer(rw, req, servers, coin, requestData, 3)
 			if err != nil {
-				// Handle the error appropriately
 				logger.Printf("*error: %v", err)
 				return
 			}
+
 			logRequest(*server, &requestData, req.URL, startTimer)
-			// Handle the default case here
 		}
 
 	})
@@ -190,9 +190,6 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			// This case happens when client close app before receiving response.
 			return nil, err
 		}
-		//idToPrune := map[string][]int{
-		//	coin: {server.id},
-		//}
 		servers.removeIDFromCoinsServersIDs(coin, server.id)
 		//servers.updateGCoinsIDs(idToPrune)
 		logger.Printf("*error %d handleOriginServerResponse: %v pruning server[%d]", i, err, server.id)
@@ -262,7 +259,6 @@ func extractCoinFromParams(requestData RequestData) (string, error) {
 	var firstParam string
 	var ok bool
 
-	//	fmt.Printf("\n\nrp, coin: %s\n\n", requestData)
 	if len(requestData.Params) > 0 {
 		// logger.Printf("requestData.Params: %s", requestData.Params)
 		firstParam, ok = requestData.Params[0].(string)
@@ -343,7 +339,6 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 			return RequestData{Method: "null", Params: nil, Ip: ""}, err
 		}
 	}
-	//fmt.Println("client ip : ", ip)
 	if req.Method == http.MethodGet {
 		method := req.URL.Path[1:]
 		params := []interface{}{}
@@ -375,7 +370,6 @@ func transformRequestToEXRSyntax(req *http.Request, serverURL string, requestDat
 	}
 
 	req.Body = io.NopCloser(bytes.NewBuffer(exrRequestBody))
-	//req.ContentLength = int64(len(exrRequestBody))
 	return req, nil
 }
 
@@ -384,7 +378,6 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// Check if the response status code is 200
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("*error unexpected server response status: %s", resp.Status)
@@ -397,7 +390,7 @@ func parseAndNormalizeResponse(responseBody []byte, server *Server) (*fastjson.V
 	var parsedResponse *fastjson.Value
 	var err error
 	if len(responseBody) == 0 {
-		parsedResponse = fastjson.MustParse(`{"result": null, "error": null}`)
+		parsedResponse = getDefaultJSONResponse()
 	} else {
 		parsedResponse, err = parseJSON(responseBody)
 		if err != nil {
