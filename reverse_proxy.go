@@ -1,5 +1,6 @@
-// reverse_proxy receive the 'cc-daemon' requests, extract 'coin' 'method' 'params', transform if needed request for exr syntax,
-// and relay the request to a 'valid' server in list.
+// reverse_proxy.go
+// Reverse proxy for handling 'cc-daemon' requests, extracting 'coin' and 'method' parameters,
+// transforming requests for EXR syntax, and relaying them to a valid server in the list.
 
 package main
 
@@ -22,12 +23,11 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+// reverseProxy starts a reverse proxy server on the specified port.
 func reverseProxy(port int, servers *Servers) {
-
 	logger.Print("ReverseProxy started, Listening on ", port)
 
 	reverseProxyHandler := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-
 		requestData, err := extractRequestData(req)
 		if err != nil {
 			return
@@ -35,32 +35,17 @@ func reverseProxy(port int, servers *Servers) {
 
 		rw.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
-		ok := false
-		for _, path := range config.AcceptedPaths {
-			if req.URL.Path == path {
-				// Process the accepted path
-				// Get out of the loop
-				ok = true
-				break
-			}
-		}
-
-		if !ok {
+		// Check if the request path is in the acceptedPaths list
+		if !isPathAccepted(req.URL.Path) {
 			logger.Print("*error ", req.URL.Path, " not in the acceptedPaths list ", requestData.Ip)
-
-			// If the request path is not in the acceptedPaths list, reject the request
-			//http.NotFound(rw, req)
 			http.NotFound(rw, req)
 			return
 		}
 
 		startTimer := time.Now()
-		//var validServer int
 
 		switch {
-
 		case req.URL.Path == "/servers" || requestData.Method == "servers":
-			//	servers.g_coinsServersIDs
 			response := getDefaultJSONResponse()
 			response.Set("result", servers.g_coinsServersIDs)
 			err := writeResponse(rw, response)
@@ -110,18 +95,8 @@ func reverseProxy(port int, servers *Servers) {
 			return
 
 		default:
-			ok := false
-			for _, method := range config.AcceptedMethods {
-				if requestData.Method == method {
-					// Get out of the loop
-					ok = true
-					break
-				}
-			}
-
-			if !ok {
+			if !isMethodAccepted(requestData.Method) {
 				logger.Print("*error ", requestData.Method, " not in the acceptedMethods list ", requestData.Ip)
-				// If the method is not in the acceptedMethods list, reject the request
 				http.NotFound(rw, req)
 				return
 			}
@@ -132,7 +107,6 @@ func reverseProxy(port int, servers *Servers) {
 				return
 			}
 
-			//  Select a server / transmit the request / in case of error, retry another server  / relay response to client
 			server, err := retryWithRandomValidServer(rw, req, servers, coin, requestData, 3)
 			if err != nil {
 				logger.Printf("*error: %v", err)
@@ -141,7 +115,6 @@ func reverseProxy(port int, servers *Servers) {
 
 			logRequest(*server, &requestData, req.URL, startTimer)
 		}
-
 	})
 
 	srv := &http.Server{
@@ -156,6 +129,7 @@ func reverseProxy(port int, servers *Servers) {
 	}
 }
 
+// retryWithRandomValidServer selects a random valid server, sends the request, and handles the response.
 func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, servers *Servers, coin string, requestData RequestData, maxRetries int) (*Server, error) {
 	for i := 0; i < maxRetries; i++ {
 		randomValidServer, err := servers.getRandomValidServerId(coin)
@@ -180,27 +154,22 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		}
 
 		err = handleOriginServerResponse(rw, req, &server)
-		//if err != nil {
-		//	fmt.Println("**ERROR**", err, err.Error())
-		//}
-		if err == nil {
-			// Success, return the server
+		if err != nil {
+			if strings.Contains(err.Error(), "context canceled") {
+				return nil, err
+			}
+			servers.removeIDFromCoinsServersIDs(coin, server.id)
+			logger.Printf("*error %d handleOriginServerResponse: %v pruning server[%d]", i, err, server.id)
+		} else {
 			return &server, nil
-		} else if strings.Contains(err.Error(), "context canceled") {
-			// This case happens when client close app before receiving response.
-			return nil, err
 		}
-		servers.removeIDFromCoinsServersIDs(coin, server.id)
-		//servers.updateGCoinsIDs(idToPrune)
-		logger.Printf("*error %d handleOriginServerResponse: %v pruning server[%d]", i, err, server.id)
-		// Handle the error and decide whether to retry with another server
 	}
 
-	// All retries exhausted, return an error
 	logger.Println("All retries exhausted. Unable to process the request.")
 	return nil, fmt.Errorf("all retries exhausted")
 }
 
+// updateRequestHeaders updates the request headers for the origin server.
 func updateRequestHeaders(req *http.Request, server *Server, requestData RequestData) error {
 	originServerURL, err := url.Parse(server.url)
 	if err != nil {
@@ -219,6 +188,7 @@ func updateRequestHeaders(req *http.Request, server *Server, requestData Request
 	req.URL.Scheme = originServerURL.Scheme
 	req.RequestURI = ""
 	req.Header.Set("Accept-Encoding", "gzip")
+
 	if req.Body != nil {
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
@@ -231,6 +201,7 @@ func updateRequestHeaders(req *http.Request, server *Server, requestData Request
 	return nil
 }
 
+// handleOriginServerResponse sends the request to the origin server and handles the response.
 func handleOriginServerResponse(rw http.ResponseWriter, req *http.Request, server *Server) error {
 	originServerResponse, err := sendRequestToOriginServer(req)
 	if err != nil {
@@ -255,15 +226,14 @@ func handleOriginServerResponse(rw http.ResponseWriter, req *http.Request, serve
 	return nil
 }
 
+// extractCoinFromParams extracts the coin from the request parameters.
 func extractCoinFromParams(requestData RequestData) (string, error) {
 	var firstParam string
 	var ok bool
 
 	if len(requestData.Params) > 0 {
-		// logger.Printf("requestData.Params: %s", requestData.Params)
 		firstParam, ok = requestData.Params[0].(string)
 		if !ok {
-
 			return "", errors.New("invalid type for firstParam")
 		}
 	}
@@ -271,8 +241,8 @@ func extractCoinFromParams(requestData RequestData) (string, error) {
 	return firstParam, nil
 }
 
+// decompressResponseBody decompresses the response body based on the content encoding.
 func decompressResponseBody(response *http.Response) ([]byte, error) {
-	// Check if the response is compressed
 	contentEncoding := response.Header.Get("Content-Encoding")
 	switch contentEncoding {
 	case "gzip":
@@ -284,9 +254,9 @@ func decompressResponseBody(response *http.Response) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported compression algorithm: %s", contentEncoding)
 	}
-	return nil, errors.New("unreachable code")
 }
 
+// decompressGzip decompresses a gzip-compressed response body.
 func decompressGzip(input io.Reader) ([]byte, error) {
 	reader, err := gzip.NewReader(input)
 	if err != nil {
@@ -297,6 +267,7 @@ func decompressGzip(input io.Reader) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
+// decompressDeflate decompresses a deflate-compressed response body.
 func decompressDeflate(input io.Reader) ([]byte, error) {
 	reader := flate.NewReader(input)
 	defer reader.Close()
@@ -304,14 +275,13 @@ func decompressDeflate(input io.Reader) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
+// extractRequestData extracts the method, parameters, and client IP from the request.
 func extractRequestData(req *http.Request) (RequestData, error) {
-	// buff request to avoid altering original
 	buf, _ := io.ReadAll(req.Body)
 	rdr1 := io.NopCloser(bytes.NewBuffer(buf))
 	rdr2 := io.NopCloser(bytes.NewBuffer(buf))
 	requestData, err := extractMethodParamsIp(rdr1, req)
 
-	//logger.Printf("method: %v  ip: %v, err: %v", requestData.Method, requestData.Ip, err)
 	if err != nil {
 		return RequestData{Method: "null", Params: nil, Ip: "null"}, err
 	}
@@ -319,26 +289,24 @@ func extractRequestData(req *http.Request) (RequestData, error) {
 	return requestData, nil
 }
 
+// extractMethodParamsIp extracts the method, parameters, and client IP from the request.
 func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error) {
-
 	var requestData RequestData
 	var ip string
 	var err error
+
 	reqClientIP := req.Header.Get("X-Forwarded-For")
 	if reqClientIP != "" {
-		// The client IP is available in the X-Forwarded-For header
-		// Parse it if there are multiple IPs separated by commas
 		ips := strings.Split(reqClientIP, ",")
 		ip = strings.TrimSpace(ips[0])
-		// Use the clientIP variable as needed
 	} else {
-		// The X-Forwarded-For header is not present, fallback to previous method
 		ip, _, err = net.SplitHostPort(req.RemoteAddr)
 		if err != nil {
 			logger.Printf("error extracting client ip from request: %v", err)
 			return RequestData{Method: "null", Params: nil, Ip: ""}, err
 		}
 	}
+
 	if req.Method == http.MethodGet {
 		method := req.URL.Path[1:]
 		params := []interface{}{}
@@ -346,16 +314,17 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 	} else if req.Method == http.MethodPost {
 		err := json.NewDecoder(rdr).Decode(&requestData)
 		if err != nil {
-			//logger.Print(err)
 			return RequestData{Method: "null", Params: nil, Ip: ip}, nil
 		}
 		requestData.Ip = ip
 		return requestData, nil
 	}
+
 	requestData.Path = req.URL.Path
 	return RequestData{}, nil
 }
 
+// transformRequestToEXRSyntax transforms the request to EXR syntax.
 func transformRequestToEXRSyntax(req *http.Request, serverURL string, requestData RequestData) (*http.Request, error) {
 	exrURL := serverURL + "/xrs/" + requestData.Method
 	parsedURL, err := url.Parse(exrURL)
@@ -373,12 +342,13 @@ func transformRequestToEXRSyntax(req *http.Request, serverURL string, requestDat
 	return req, nil
 }
 
+// sendRequestToOriginServer sends the request to the origin server.
 func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	// Check if the response status code is 200
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("*error unexpected server response status: %s", resp.Status)
 	}
@@ -386,9 +356,11 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// parseAndNormalizeResponse parses and normalizes the response.
 func parseAndNormalizeResponse(responseBody []byte, server *Server) (*fastjson.Value, error) {
 	var parsedResponse *fastjson.Value
 	var err error
+
 	if len(responseBody) == 0 {
 		parsedResponse = getDefaultJSONResponse()
 	} else {
@@ -396,21 +368,25 @@ func parseAndNormalizeResponse(responseBody []byte, server *Server) (*fastjson.V
 		if err != nil {
 			return nil, err
 		}
+
 		if fastjson.Exists(parsedResponse.MarshalTo(nil), "code") && fastjson.Exists(parsedResponse.MarshalTo(nil), "error") {
 			errorCode := parsedResponse.GetInt("code")
 			errorMessage := parsedResponse.Get("error").String()
 			return nil, fmt.Errorf("server[%d] code: %d error: %s", server.id, errorCode, errorMessage)
 		}
 	}
+
 	return parsedResponse, nil
 }
 
+// writeResponse writes the response to the client.
 func writeResponse(rw http.ResponseWriter, response *fastjson.Value) error {
 	rw.WriteHeader(http.StatusOK)
 	_, err := rw.Write(response.MarshalTo(nil))
 	return err
 }
 
+// logRequest logs the request details.
 func logRequest(server Server, requestData *RequestData, reqURL *url.URL, startTimer time.Time) {
 	var bufParams interface{}
 	if len(requestData.Params) > 0 {
@@ -420,4 +396,24 @@ func logRequest(server Server, requestData *RequestData, reqURL *url.URL, startT
 	}
 	elapsedTimer := time.Since(startTimer)
 	logger.Printf("[revProxy_Serv] %s request %s %s relayed OK to server[%d], exec_timer:%s\n", requestData.Ip, requestData.Method, bufParams, server.id, elapsedTimer)
+}
+
+// isPathAccepted checks if the request path is in the acceptedPaths list.
+func isPathAccepted(path string) bool {
+	for _, acceptedPath := range config.AcceptedPaths {
+		if path == acceptedPath {
+			return true
+		}
+	}
+	return false
+}
+
+// isMethodAccepted checks if the request method is in the acceptedMethods list.
+func isMethodAccepted(method string) bool {
+	for _, acceptedMethod := range config.AcceptedMethods {
+		if method == acceptedMethod {
+			return true
+		}
+	}
+	return false
 }
