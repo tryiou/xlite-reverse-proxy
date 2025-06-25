@@ -29,8 +29,8 @@ func (servers *Servers) serverAdd(s *Server) int {
 
 	servers.Slice = append(servers.Slice, s)
 	//servers.Map[s.id] = *s
-	s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
-	s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
+	s.getfees = getDefaultJSONResponse()
+	s.getheights = getDefaultJSONResponse()
 	s.coinsMap = make(map[string]Coin)
 	s.hashesStorage = make(map[string]map[int]string)
 	return s.id
@@ -354,7 +354,7 @@ func (servers *Servers) updateGCoinsIDs(nonConsensusMap map[string][]int) {
 					id := idsArray[i]
 					if id.Type() == fastjson.TypeNumber {
 						serverID := int(id.GetInt())
-						if !containsID(serverIDs, serverID) {
+						if !slices.Contains(serverIDs, serverID) {
 							updatedIDs = append(updatedIDs, id)
 						}
 					}
@@ -473,42 +473,6 @@ func (servers *Servers) updateServersData(wg *sync.WaitGroup) {
 	logger.Printf("|SERVERS|_Fees    : %v", servers.g_getfees)
 	logger.Printf("|SERVERS|_Srv_IDs : %v", servers.g_coinsServersIDs)
 
-}
-
-func purgeCache(blockCache map[string]*BlockCache, maxStoredBlocks int) {
-	// Create a map to keep track of the number of entries for each coin.
-	coinCountMap := make(map[string]int)
-
-	// Iterate through the blockCache to count the number of entries for each coin.
-	for _, v := range blockCache {
-		coinCountMap[v.BlockHash]++
-	}
-
-	// If the number of entries for a coin exceeds maxStoredBlocks, remove the oldest entries until only maxStoredBlocks are left.
-	for coinHash, count := range coinCountMap {
-		if count > maxStoredBlocks {
-			var oldestEntriesToDelete = count - maxStoredBlocks
-			for k, v := range blockCache {
-				if v.BlockHash == coinHash {
-					delete(blockCache, k)
-					oldestEntriesToDelete--
-					if oldestEntriesToDelete == 0 {
-						break
-					}
-				}
-			}
-		}
-	}
-}
-
-func removeNonPrintableChars(s string) string {
-	var result []rune
-	for _, c := range s {
-		if c >= 32 && c <= 126 && c != '\\' && c != '"' && c != '\x00' {
-			result = append(result, c)
-		}
-	}
-	return string(result)
 }
 
 // extract data from heights json result per server, return a map[coin] with each server getBlockCount
@@ -636,11 +600,6 @@ func hashExistsInStorage(storage map[int]string, hash string) bool {
 	return false
 }
 
-// Helper function to check if a server ID is present in the slice
-func containsID(ids []int, id int) bool {
-	return slices.Contains(ids, id)
-}
-
 func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 	consensus := fastjson.MustParse(`{"result": {}, "error": null}`)
 
@@ -761,7 +720,8 @@ func findCommonHeightServers(servers *Servers, mostCommonHeightsRanges map[strin
 			//logger.Print("coin = ", coin, ",coinObj = ", coinObj)
 			if heights, ok := mostCommonHeightsRanges[coin]; ok {
 				//logger.Print("heights = ", heights, ",ok = ", ok)
-				if containsValue(heights, coinObj.getBlockCount) {
+
+				if slices.Contains(heights, coinObj.getBlockCount) {
 					//logger.Print("ratioMap(", coin, ") = ", ratioMap[coin])
 					if ratioMap[coin] >= config.ConsensusThreshold {
 						commonHeightServers[coin] = append(commonHeightServers[coin], server.id)
@@ -772,10 +732,6 @@ func findCommonHeightServers(servers *Servers, mostCommonHeightsRanges map[strin
 	}
 	//logger.Print("commonHeightServers = ", commonHeightServers)
 	return commonHeightServers
-}
-
-func containsValue(values []int, value int) bool {
-	return slices.Contains(values, value)
 }
 
 func computeMostCommonHeightsRanges(heightsMap map[string][]int) map[string][]int {

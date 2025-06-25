@@ -1,13 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
-	"strings"
-	"time"
 
 	"github.com/valyala/fastjson"
 )
@@ -40,16 +36,16 @@ func (s *Server) server_GetPing() error {
 	if err != nil {
 		s.ping = 0
 		s.coinsMap = make(map[string]Coin)
-		s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
-		s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getfees = getDefaultJSONResponse()
+		s.getheights = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetPing, failed to make HTTP request: %w", err)
 	}
 	jsonValue, err := parseJSON(response)
 	if err != nil {
 		s.ping = 0
 		s.coinsMap = make(map[string]Coin)
-		s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
-		s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getfees = getDefaultJSONResponse()
+		s.getheights = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetPing, failed to parse JSON response: %w", err)
 	}
 
@@ -59,8 +55,8 @@ func (s *Server) server_GetPing() error {
 		// Handle the error
 		s.ping = 0
 		s.coinsMap = make(map[string]Coin)
-		s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
-		s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getfees = getDefaultJSONResponse()
+		s.getheights = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetPing, error: failed to retrieve the 'result' element")
 	}
 
@@ -132,12 +128,12 @@ func (s *Server) server_GetFees() error {
 
 	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
-		s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getfees = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetFees, failed to make HTTP request: %w", err)
 	}
 	jsonValue, err := parseJSON(response)
 	if err != nil {
-		s.getfees = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getfees = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetFees, failed to parse JSON response: %w", err)
 	}
 	s.getfees = jsonValue
@@ -149,12 +145,12 @@ func (s *Server) server_GetHeights() error {
 	payloadParams := []interface{}{}
 	response, err := makeHTTPRequest(*s, http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
-		s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getheights = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetHeights, failed to make HTTP request: %w", err)
 	}
 	json, err := parseJSON(response)
 	if err != nil {
-		s.getheights = fastjson.MustParse(`{"result": null, "error": null}`)
+		s.getheights = getDefaultJSONResponse()
 		return fmt.Errorf("server_GetHeights, failed to parse JSON response: %w", err)
 	}
 	s.getheights = json
@@ -182,65 +178,4 @@ func (s *Server) sortGetHeightsKeys() {
 			s.getheights.Set("result", sortedResultObj)
 		}
 	}
-}
-
-func makeHTTPRequest(s Server, httpMethod, payloadMethod string, payloadParams []interface{}, timeout int) ([]byte, error) {
-	var (
-		url     string
-		payload string
-	)
-
-	if !s.exr {
-		// DIRECT CALL TO PLUGIN_ADAPTER
-		url = s.url
-		payloadData := struct {
-			Method string        `json:"method"`
-			Params []interface{} `json:"params"`
-		}{
-			Method: payloadMethod,
-			Params: payloadParams,
-		}
-		payloadBytes, err := json.Marshal(payloadData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal payloadData to JSON: %w", err)
-		}
-		payload = string(payloadBytes)
-	} else {
-		// EXR NODE!
-		url = s.url + "/xrs/" + payloadMethod
-		payloadBytes, err := json.Marshal(payloadParams)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal payloadParams to JSON: %w", err)
-		}
-		payload = string(payloadBytes)
-	}
-
-	//timeout
-	timeoutDuration := time.Duration(timeout) * time.Second
-	http.DefaultClient.Timeout = timeoutDuration
-
-	client := &http.Client{
-		Timeout: timeoutDuration,
-	}
-	reqTimer := time.Now()
-	//elapsedTimer := time.Since(startTimer)
-	req, err := http.NewRequest(httpMethod, url, strings.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w, %v", err, time.Since(reqTimer))
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send HTTP request: %w, %v", err, time.Since(reqTimer))
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read HTTP response body: %w", err)
-	}
-
-	return body, nil
 }

@@ -4,8 +4,6 @@ import (
 	"flag"
 	"sync"
 	"time"
-
-	"github.com/valyala/fastjson"
 )
 
 var mu sync.Mutex
@@ -45,9 +43,9 @@ func main() {
 
 	// Create a new instance of Servers
 	servers := Servers{
-		g_getfees:         fastjson.MustParse(`{"result": null, "error": null}`),
-		g_getheights:      fastjson.MustParse(`{"result": null, "error": null}`),
-		g_coinsServersIDs: fastjson.MustParse(`{}`),
+		g_getfees:         getDefaultJSONResponse(),
+		g_getheights:      getDefaultJSONResponse(),
+		g_coinsServersIDs: getEmptyJSONResponse(),
 	}
 
 	if *dynlist_bool {

@@ -393,20 +393,6 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func parseJSON(data []byte) (*fastjson.Value, error) {
-	var p fastjson.Parser
-	value, err := p.ParseBytes(data)
-	if err != nil {
-		errorMsg := string(data)
-		if strings.Contains(errorMsg, "Internal Server Error") {
-			// Handle the error by producing valid JSON
-			return fastjson.Parse(`{"error": "Internal Server Error"}`)
-		}
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
-	}
-	return value, nil
-}
-
 func parseAndNormalizeResponse(responseBody []byte, server *Server) (*fastjson.Value, error) {
 	var parsedResponse *fastjson.Value
 	var err error
