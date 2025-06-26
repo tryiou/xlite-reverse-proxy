@@ -302,7 +302,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	servers.updateCoinDataForAllServers()
 
 	// 9. Find and remove servers with non-consensus block hashes.
-	nonConsensusServersMap := findServersWithNonConsensusHashes(servers)
+	nonConsensusServersMap := FindServersFailingHashConsensus(servers)
 	if len(nonConsensusServersMap) > 0 {
 		logger.Printf("getGlobalHeights, nonConsensusServersMap = %v", nonConsensusServersMap)
 		servers.removeNonConsensusServersFromGlobalList(nonConsensusServersMap)
@@ -495,128 +495,167 @@ func buildCoinHeightsMap(servers *Servers) (map[string][]int, error) {
 	return heightsMap, nil
 }
 
-// collectBlockHashVotes gathers block hashes for the consensus height from all relevant servers.
-// It returns a map where keys are coin tickers and values are maps of block hashes to the list of server IDs that reported that hash.
-func collectBlockHashVotes(servers *Servers) map[string]map[string][]int {
+// CollectBlockHashVotesForConsensusHeight gathers block hash "votes" from each server
+// for the globally agreed-upon consensus height of each coin. If a server does not have
+// the hash for the consensus height cached, it will attempt to fetch it.
+// This function has a side-effect: it populates the `hashesStorage` for servers.
+// It returns a map where keys are coin tickers, and values are maps of block hashes to
+// the list of server IDs that reported that hash.
+// e.g., {"BTC": {"0000...abc": [1, 3], "0000...def": [2]}}
+func CollectBlockHashVotesForConsensusHeight(servers *Servers) map[string]map[string][]int {
 	votes := make(map[string]map[string][]int)
-	gCoinsIDsObj := servers.GlobalCoinServerIDs.GetObject()
-	if gCoinsIDsObj == nil {
+	globalCoinServerIDs, err := servers.GlobalCoinServerIDs.Object()
+	if err != nil || globalCoinServerIDs == nil {
 		return votes
 	}
 
-	coins := make([]string, 0)
-	gCoinsIDsObj.Visit(func(key []byte, v *fastjson.Value) {
-		coins = append(coins, string(key))
-	})
-	for _, coin := range coins {
-		idsJson := gCoinsIDsObj.Get(coin).Get("ids")
-		// Retrieve the array of values and the error
-		idsArray, err := idsJson.Array()
-		if err != nil {
-			// Handle the error
-			fmt.Printf("Error occurred while retrieving ids array: %v\n", err)
-			continue
+	globalHeightsResult := servers.GlobalHeights.Get("result")
+	if globalHeightsResult == nil {
+		return votes
+	}
+
+	globalCoinServerIDs.Visit(func(coinBytes []byte, coinValue *fastjson.Value) {
+		coin := string(coinBytes)
+		consensusHeightValue := globalHeightsResult.Get(coin)
+		if consensusHeightValue == nil {
+			return // No consensus height for this coin.
 		}
-		// Iterate over the ids array
-		for _, id := range idsArray {
-			server, exist := servers.GetServerByID(id.GetInt())
-			if !exist {
-				logger.Printf("Can't find server %v", id)
-				continue
-			}
-			commonHeightJson := servers.GlobalHeights.Get("result").Get(coin)
-			if commonHeightJson == nil {
+		consensusHeight, err := consensusHeightValue.Int()
+		if err != nil {
+			return // Invalid height format.
+		}
+
+		serverIDsValue := coinValue.Get("ids")
+		if serverIDsValue == nil {
+			return
+		}
+		serverIDs, err := serverIDsValue.Array()
+		if err != nil {
+			return
+		}
+
+		for _, idValue := range serverIDs {
+			serverID, _ := idValue.Int()
+			server, exists := servers.GetServerByID(serverID)
+			if !exists {
+				logger.Printf("Cannot find server with ID %d for coin %s", serverID, coin)
 				continue
 			}
 
-			commonHeight := commonHeightJson.GetInt()
+			// If no map for the coin, can't have a hash.
 			if server.hashesStorage[coin] == nil {
 				continue
 			}
-			if server.hashesStorage[coin][commonHeight] == "" {
-				// Fetch hash if not already stored for this height
-				getBlockHash, err := server.server_GetBlockHash(coin, commonHeight)
+
+			// Fetch and cache the hash if it's missing or empty for the consensus height.
+			// This preserves the original logic of re-fetching if a previous attempt failed and stored "".
+			if server.hashesStorage[coin][consensusHeight] == "" {
+				hash, err := server.server_GetBlockHash(coin, consensusHeight)
 				if err != nil {
-					logger.Printf("collectBlockHashVotes, error with server_GetBlockHash: %v", err)
-					getBlockHash = ""
+					logger.Printf("CollectBlockHashVotes: error from server_GetBlockHash for server %d, coin %s: %v", server.id, coin, err)
+					// Store an empty string to prevent re-fetching on this cycle, but it won't be counted as a vote.
+					hash = ""
 				}
-				server.hashesStorage[coin][commonHeight] = getBlockHash
+				server.hashesStorage[coin][consensusHeight] = hash
 			}
-			if server.hashesStorage[coin][commonHeight] != "" {
+
+			// If a valid hash exists, record the vote.
+			if hash := server.hashesStorage[coin][consensusHeight]; hash != "" {
 				if votes[coin] == nil {
 					votes[coin] = make(map[string][]int)
 				}
-				hash := server.hashesStorage[coin][commonHeight]
 				votes[coin][hash] = append(votes[coin][hash], server.id)
 			}
 		}
-	}
+	})
+
 	return votes
 }
 
-// determineConsensusHashes analyzes the collected block hash votes to find the consensus hash for each coin.
-func determineConsensusHashes(votes map[string]map[string][]int) map[string]string {
+// DetermineConsensusHashes analyzes the collected block hash votes to find the consensus hash
+// for each coin. A consensus is reached if a single hash is reported by a ratio of servers
+// that meets or exceeds `config.ConsensusThreshold`.
+// Note: Since map iteration order is not guaranteed, if multiple hashes meet the threshold,
+// the one that is processed first will be chosen. This behavior is preserved from the original implementation.
+func DetermineConsensusHashes(votesPerCoin map[string]map[string][]int) map[string]string {
 	consensusHashes := make(map[string]string)
-	for coin, coinVotes := range votes {
-		total := 0
-		for _, ids := range coinVotes {
-			total += len(ids)
+
+	for coin, votesForHash := range votesPerCoin {
+		// Calculate the total number of servers that submitted a valid hash for this coin.
+		totalVotes := 0
+		for _, serverIDs := range votesForHash {
+			totalVotes += len(serverIDs)
 		}
-		for hash, ids := range coinVotes {
-			ratio := float64(len(ids)) / float64(total)
+
+		if totalVotes == 0 {
+			continue
+		}
+
+		// Find the first hash that meets the consensus threshold.
+		for hash, serverIDsWithHash := range votesForHash {
+			ratio := float64(len(serverIDsWithHash)) / float64(totalVotes)
 			if ratio >= config.ConsensusThreshold {
 				consensusHashes[coin] = hash
-				break // Found consensus hash for this coin
+				break // Consensus found for this coin.
 			}
 		}
 	}
 	return consensusHashes
 }
 
-// findServersWithNonConsensusHashes compares every server's block hash against the consensus hash
-// for each coin and produces a map of server IDs that are not in consensus.
-func findServersWithNonConsensusHashes(servers *Servers) map[string][]int {
-	// 1. Collect all block hash votes from servers.
-	votes := collectBlockHashVotes(servers)
+// FindServersFailingHashConsensus identifies servers that do not have the consensus block hash
+// for a given coin. It orchestrates the process of collecting votes, determining consensus,
+// and then finding the divergent servers.
+// It returns a map where the key is the coin ticker and the value is a slice of
+// server IDs that failed the hash consensus check.
+func FindServersFailingHashConsensus(servers *Servers) map[string][]int {
+	// 1. Collect block hash votes from all servers for the consensus height of each coin.
+	// This step may also involve fetching and caching hashes if they are not already stored.
+	votes := CollectBlockHashVotesForConsensusHeight(servers)
 
-	// 2. Determine the single consensus hash for each coin.
-	consensusHashes := determineConsensusHashes(votes)
+	// 2. Determine the consensus hash for each coin based on the votes.
+	consensusHashes := DetermineConsensusHashes(votes)
 
-	// 3. Identify servers that do not match the consensus hash.
-	nonConsensusServersMap := make(map[string][]int)
-	gCoinsIDsObj := servers.GlobalCoinServerIDs.GetObject()
-	if gCoinsIDsObj == nil {
-		return nonConsensusServersMap
+	// 3. Identify servers that do not have the consensus hash in their storage for each coin.
+	failingServers := make(map[string][]int)
+	globalCoinServerIDs, err := servers.GlobalCoinServerIDs.Object()
+	if err != nil || globalCoinServerIDs == nil {
+		return failingServers
 	}
 
-	gCoinsIDsObj.Visit(func(bCoin []byte, v *fastjson.Value) {
-		coin := string(bCoin)
+	globalCoinServerIDs.Visit(func(coinBytes []byte, coinValue *fastjson.Value) {
+		coin := string(coinBytes)
 		consensusHash, hasConsensus := consensusHashes[coin]
 		if !hasConsensus {
-			return // No consensus was reached for this coin.
+			return // No consensus was reached for this coin, so no servers can fail.
 		}
 
-		idsArray, _ := v.Get("ids").Array()
-		for _, idVal := range idsArray {
-			serverID, _ := idVal.Int()
+		serverIDs, _ := coinValue.Get("ids").Array()
+		for _, idValue := range serverIDs {
+			serverID, _ := idValue.Int()
 			server, exists := servers.GetServerByID(serverID)
 			if !exists {
 				continue
 			}
 
-			// If the server's reported hash for the consensus height does not match the consensus hash, mark it as non-consensus.
-			if !hashExistsInStorage(server.hashesStorage[coin], consensusHash) {
-				nonConsensusServersMap[coin] = append(nonConsensusServersMap[coin], server.id)
+			// A server fails consensus if the consensus hash is not present in its
+			// hash storage for the given coin. Note that this checks against all hashes
+			// stored for the coin on that server, not just the hash at the consensus height.
+			// This is the original, intended behavior.
+			if !isHashPresentInCoinStorage(server.hashesStorage[coin], consensusHash) {
+				failingServers[coin] = append(failingServers[coin], server.id)
 			}
 		}
 	})
 
-	return nonConsensusServersMap
+	return failingServers
 }
 
-func hashExistsInStorage(storage map[int]string, hash string) bool {
-	for _, h := range storage {
-		if h == hash {
+// isHashPresentInCoinStorage checks if a given hash exists in a server's hash storage for a specific coin.
+// Importantly, it checks against all hashes stored for that coin, regardless of block height.
+func isHashPresentInCoinStorage(storage map[int]string, hashToFind string) bool {
+	for _, storedHash := range storage {
+		if storedHash == hashToFind {
 			return true
 		}
 	}
