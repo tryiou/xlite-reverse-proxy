@@ -2,12 +2,15 @@ package main
 
 import (
 	"flag"
+	"log"
 	"sync"
 	"time"
 )
 
 var mu sync.Mutex
 var blockCache = make(map[string]*BlockCache)
+
+var config *Config
 
 func startGoroutines(servers *Servers, rp_port int) {
 	var wg sync.WaitGroup
@@ -31,15 +34,21 @@ func (servers *Servers) timer_UpdateAllServersData(wg *sync.WaitGroup) {
 
 func init() {
 	initLogger()
-	initConfig()
 }
 
 func main() {
 	defer logFile.Close()
 
 	// Define a command-line flag for the launch argument
-	dynlist_bool := flag.Bool("dynlist", false, "Set to true to use dynamic server list & update routine")
+	dynlist := flag.Bool("dynlist", false, "Set to true to use dynamic server list & update routine")
+	configFile := flag.String("config", "xlite-reverse-proxy-config.yaml", "Path to the configuration file")
 	flag.Parse()
+
+	var err error
+	config, err = newConfig(*configFile)
+	if err != nil {
+		log.Fatalf("Error loading configuration: %v", err)
+	}
 
 	// Create a new instance of Servers
 	servers := Servers{
@@ -48,7 +57,7 @@ func main() {
 		GlobalCoinServerIDs: getEmptyJSONResponse(),
 	}
 
-	if *dynlist_bool {
+	if *dynlist {
 		// Dynamic servers list from Dynlist_servers_providers and goroutine updating it every 5 min, remove/add servers on the fly
 		startServerUpdateRoutine(&servers)
 	} else {

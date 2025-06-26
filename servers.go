@@ -71,13 +71,13 @@ func (servers *Servers) GetServerByID(id int) (Server, bool) {
 
 // GetServerByURL retrieves a server by its URL.
 // It returns the server and a boolean indicating if the server was found.
-func (servers *Servers) GetServerByURL(url string) (Server, bool) {
+func (servers *Servers) GetServerByURL(url string) (*Server, bool) {
 	for _, server := range servers.Slice {
 		if server.url == url {
-			return *server, true
+			return server, true
 		}
 	}
-	return Server{}, false
+	return nil, false
 }
 
 // UpdateGlobalFees calculates the consensus for transaction fees across all healthy servers.

@@ -59,3 +59,18 @@ type ErrorResponse struct {
 	Code  int    `json:"code"`
 	Error string `json:"error"`
 }
+
+// JsonElement represents a single element in the JSON array returned by xrshowconfigs.
+type JsonElement struct {
+	NodePubKey     string            `json:"nodepubkey"`
+	PaymentAddress string            `json:"paymentaddress"`
+	Config         string            `json:"config"`
+	Plugins        map[string]string `json:"plugins"`
+}
+
+// JsonResponse represents the top-level JSON response structure from xrshowconfigs.
+type JsonResponse struct {
+	Result string  `json:"result"`
+	Error  *string `json:"error"`
+	Id     int     `json:"id"`
+}
