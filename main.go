@@ -16,16 +16,16 @@ func startGoroutines(servers *Servers, rp_port int) {
 		reverseProxy(rp_port, servers)
 	}()
 
-	servers.updateServersData(&wg)
-	servers.timer_UpdateServersData(&wg)
+	servers.UpdateAllServersData(&wg)
+	servers.timer_UpdateAllServersData(&wg)
 }
 
-func (servers *Servers) timer_UpdateServersData(wg *sync.WaitGroup) {
+func (servers *Servers) timer_UpdateAllServersData(wg *sync.WaitGroup) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop() // Stop the ticker when the function returns
 
 	for range ticker.C {
-		servers.updateServersData(wg)
+		servers.UpdateAllServersData(wg)
 	}
 }
 
@@ -43,9 +43,9 @@ func main() {
 
 	// Create a new instance of Servers
 	servers := Servers{
-		g_getfees:         getDefaultJSONResponse(),
-		g_getheights:      getDefaultJSONResponse(),
-		g_coinsServersIDs: getEmptyJSONResponse(),
+		GlobalFees:          getDefaultJSONResponse(),
+		GlobalHeights:       getDefaultJSONResponse(),
+		GlobalCoinServerIDs: getEmptyJSONResponse(),
 	}
 
 	if *dynlist_bool {

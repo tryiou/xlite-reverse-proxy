@@ -46,8 +46,8 @@ func reverseProxy(port int, servers *Servers) {
 
 		switch {
 		case req.URL.Path == "/servers" || requestData.Method == "servers":
-			response := getDefaultJSONResponse()
-			response.Set("result", servers.g_coinsServersIDs)
+			response := getDefaultJSONResponse() // a base response with result and error fields
+			response.Set("result", servers.GlobalCoinServerIDs)
 			err := writeResponse(rw, response)
 			if err != nil {
 				logger.Printf("*error Failed to write response: %v", err)
@@ -59,7 +59,7 @@ func reverseProxy(port int, servers *Servers) {
 			return
 
 		case req.URL.Path == "/heights" || req.URL.Path == "/height" || requestData.Method == "heights" || requestData.Method == "height":
-			response := servers.g_getheights
+			response := servers.GlobalHeights
 			err := writeResponse(rw, response)
 			if err != nil {
 				logger.Printf("*error Failed to write response: %v", err)
@@ -71,7 +71,7 @@ func reverseProxy(port int, servers *Servers) {
 			return
 
 		case req.URL.Path == "/fees" || requestData.Method == "fees":
-			response := servers.g_getfees
+			response := servers.GlobalFees
 			err := writeResponse(rw, response)
 			if err != nil {
 				logger.Printf("*error Failed to write response: %v", err)
@@ -107,7 +107,7 @@ func reverseProxy(port int, servers *Servers) {
 				return
 			}
 
-			server, err := retryWithRandomValidServer(rw, req, servers, coin, requestData, 3)
+			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, 3)
 			if err != nil {
 				logger.Printf("*error: %v", err)
 				return
@@ -130,9 +130,9 @@ func reverseProxy(port int, servers *Servers) {
 }
 
 // retryWithRandomValidServer selects a random valid server, sends the request, and handles the response.
-func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, servers *Servers, coin string, requestData RequestData, maxRetries int) (*Server, error) {
+func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, servers *Servers, coin string, requestData *RequestData, maxRetries int) (*Server, error) {
 	for i := 0; i < maxRetries; i++ {
-		randomValidServer, err := servers.getRandomValidServerId(coin)
+		randomValidServerID, err := servers.GetRandomValidServerID(coin)
 		if err != nil {
 			logger.Printf("*error failed to get random valid server, method: %s, error: %v", requestData.Method, err)
 			orgResponse := fastjson.MustParse(`{"result": null, "error": "No valid server for ` + coin + `"}`)
@@ -140,14 +140,13 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			return nil, err
 		}
 
-		validServer := randomValidServer
-		server, exists := servers.serverGet(validServer)
+		server, exists := servers.GetServerByID(randomValidServerID)
 		if !exists {
 			logger.Println("*error Server not found")
 			return nil, fmt.Errorf("server not found")
 		}
 
-		err = updateRequestHeaders(req, &server, requestData)
+		err = updateRequestHeaders(req, &server, *requestData)
 		if err != nil {
 			logger.Printf("*error updateRequestHeaders: %v", err)
 			return nil, err
@@ -158,7 +157,7 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			if strings.Contains(err.Error(), "context canceled") {
 				return nil, err
 			}
-			servers.removeIDFromCoinsServersIDs(coin, server.id)
+			servers.RemoveServerFromGlobalCoinList(coin, server.id)
 			logger.Printf("*error %d handleOriginServerResponse: %v pruning server[%d]", i, err, server.id)
 		} else {
 			return &server, nil

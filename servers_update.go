@@ -235,7 +235,7 @@ func UpdateServersFromJSON(servers *Servers) {
 		url, _ := serverCfg["url"].(string)
 		exr, _ := serverCfg["exr"].(bool)
 
-		if server, ok := servers.serverGetByURL(url); ok {
+		if server, ok := servers.GetServerByURL(url); ok {
 			logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Updating server[%d]: URL=%s, EXR=%v", server.id, url, exr)
 			mu.Lock()
 			server.url = url
@@ -246,7 +246,7 @@ func UpdateServersFromJSON(servers *Servers) {
 				url: url,
 				exr: exr,
 			}
-			id := servers.serverAdd(newServer)
+			id := servers.AddServer(newServer)
 			logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Adding new server[%d]: URL=%s, EXR=%v", id, url, exr)
 		}
 
@@ -257,7 +257,7 @@ func UpdateServersFromJSON(servers *Servers) {
 		server := servers.Slice[i]
 		if !existingServers[server.url] {
 			logger.Printf("|SERVERS_UPDATE|_UpdateServersFromJSON, Removing server[%d]: URL=%s", server.id, server.url)
-			servers.serverRemove(server)
+			servers.RemoveServer(server)
 		}
 	}
 

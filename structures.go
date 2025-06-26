@@ -27,9 +27,9 @@ type Servers struct {
 	Slice []*Server // used for goroutines updates
 
 	// global values, after working out consensus and health checks
-	g_getheights      *fastjson.Value
-	g_getfees         *fastjson.Value
-	g_coinsServersIDs *fastjson.Value
+	GlobalHeights       *fastjson.Value
+	GlobalFees          *fastjson.Value
+	GlobalCoinServerIDs *fastjson.Value
 }
 
 type BlockCache struct {
