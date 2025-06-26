@@ -27,9 +27,9 @@ type Servers struct {
 	Slice []*Server // used for goroutines updates
 
 	// global values, after working out consensus and health checks
-	g_getheights      *fastjson.Value
-	g_getfees         *fastjson.Value
-	g_coinsServersIDs *fastjson.Value
+	GlobalHeights       *fastjson.Value
+	GlobalFees          *fastjson.Value
+	GlobalCoinServerIDs *fastjson.Value
 }
 
 type BlockCache struct {
@@ -58,4 +58,19 @@ type PrintData struct {
 type ErrorResponse struct {
 	Code  int    `json:"code"`
 	Error string `json:"error"`
+}
+
+// JsonElement represents a single element in the JSON array returned by xrshowconfigs.
+type JsonElement struct {
+	NodePubKey     string            `json:"nodepubkey"`
+	PaymentAddress string            `json:"paymentaddress"`
+	Config         string            `json:"config"`
+	Plugins        map[string]string `json:"plugins"`
+}
+
+// JsonResponse represents the top-level JSON response structure from xrshowconfigs.
+type JsonResponse struct {
+	Result string  `json:"result"`
+	Error  *string `json:"error"`
+	Id     int     `json:"id"`
 }
