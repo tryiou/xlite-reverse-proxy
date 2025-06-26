@@ -15,6 +15,8 @@ on:
       - main
       - dev
   workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
 
@@ -61,3 +63,22 @@ jobs:
           build/xlite-reverse-proxy_macos-amd64
           build/xlite-reverse-proxy_macos-arm64
     #   run: go test -v ./...
+
+  release:
+    runs-on: ubuntu-22.04
+    needs: build # This job depends on the 'build' job to complete successfully
+    # This condition ensures the 'release' job only runs when a GitHub Release is published.
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: artifacts # Name of the artifact uploaded by the 'build' job
+        path: build/    # Path where the artifacts will be downloaded
+
+    - name: Upload Release Assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/* # Upload all files found in the 'build/' directory to the release
