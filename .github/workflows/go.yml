@@ -69,6 +69,9 @@ jobs:
     needs: build # This job depends on the 'build' job to complete successfully
     # This condition ensures the 'release' job only runs when a GitHub Release is published.
     if: github.event_name == 'release' && github.event.action == 'published'
+    permissions:
+      contents: write # Grant write permission to the GITHUB_TOKEN for creating/updating releases
+
     steps:
     - uses: actions/checkout@v3
 
