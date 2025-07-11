@@ -8,19 +8,66 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"sync"
 	"testing"
 )
 
 var (
-	testMu     sync.Mutex
-	testServer *httptest.Server
+	testMu      sync.Mutex
+	testServer  *httptest.Server
+	testResults = struct {
+		sync.Mutex
+		results map[string]bool
+	}{results: make(map[string]bool)}
 )
 
 // Initialize global servers for tests
 var servers = &Servers{}
 
+// Record test result and log immediately
+func recordTestResult(testName string, fail bool) {
+	testResults.Lock()
+	defer testResults.Unlock()
+	testResults.results[testName] = !fail
+	status := "PASS"
+	if fail {
+		status = "FAIL"
+	}
+	log.Printf("TEST_UNIT: RESULTS: [%s] %s", testName, status)
+}
+
+// Print final test summary after all tests are completed
+func PrintFinalSummary() {
+	testResults.Lock()
+	defer testResults.Unlock()
+
+	log.Println("TEST_UNIT: ========== FINAL TEST SUMMARY ==========")
+	passed, failed := 0, 0
+	for test, success := range testResults.results {
+		if success {
+			log.Printf("TEST_UNIT: PASS: %s", test)
+			passed++
+		} else {
+			log.Printf("TEST_UNIT: FAIL: %s", test)
+			failed++
+		}
+	}
+	log.Printf("TEST_UNIT: ---")
+	log.Printf("TEST_UNIT: %d passed, %d failed", passed, failed)
+	log.Println("TEST_UNIT: ========================================")
+}
+
+// TestMain to facilitate summary and exit
+func TestMain(m *testing.M) {
+	// Run all tests
+	code := m.Run()
+	PrintFinalSummary()
+	os.Exit(code)
+}
+
 func TestServerIDConsistency(t *testing.T) {
+	defer recordTestResult("TestServerIDConsistency", t.Failed())
 	log.Print("TEST_UNIT: Starting enhanced server ID consistency test")
 	testServer = createMockProvider([]string{
 		"http://server1:80",
@@ -156,7 +203,7 @@ func makeMockConfig(fullURL string) string {
 	return fmt.Sprintf(`[Main]                                                                                                                                                   
 host=%s                                                                                                                                                                          
 port=%s                                                                                                                                                                          
-plugins=heights,fees`, u.Hostname(), u.Port()) // ADD THIS LINE
+plugins=heights,fees`, u.Hostname(), u.Port())
 }
 
 // --- Test Helpers ---
