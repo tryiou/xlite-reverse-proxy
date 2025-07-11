@@ -7,7 +7,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -124,65 +123,46 @@ func (servers *Servers) UpdateGlobalFees() {
 	servers.GlobalFees = consensusFees
 }
 
-// updateCoinWithNewBlock handles the logic for updating a coin's data when a new block is detected.
-// It fetches the block hash, retrieves block data (from cache or network), calculates the time
-// difference, and updates the coin's information accordingly.
-func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *Coin) {
+func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *Coin) (blockHash string, timeDiff float64, cached bool) {
 	getBlockHash, err := s.server_GetBlockHash(coinStr, heightInt)
 	if err != nil {
-		logger.Printf("[server%d] server_GetBlockHash failed for %s at height %d, err: %v", s.id, coinStr, heightInt, err)
+		logger.Printf("[server%2d] Failed to get block hash for %s at height %d: %v", s.id, coinStr, heightInt, err)
 		coinMap.getBlockHash = ""
 		coinMap.timeDiff = -1000
-		return
+		return "", 0, false
 	}
 
 	if getBlockHash == "" {
+		logger.Printf("[server%2d] Empty block hash for %s at height %d", s.id, coinStr, heightInt)
 		coinMap.getBlockHash = ""
 		coinMap.timeDiff = -1000
-		return
+		return "", 0, false
 	}
 
-	// Check for the block in the cache or fetch it if not present.
-	blockCacheKey := fmt.Sprintf("%s_%s", coinStr, getBlockHash)
-	if _, exists := blockCache[blockCacheKey]; !exists {
-		getBlock, err := s.server_GetBlock(coinStr, getBlockHash)
-		if err != nil {
-			logger.Printf("[server%d] server_GetBlock failed, err: %v", s.id, err)
-		} else {
-			timestamp, err := getBlock.Get("time").Int64()
-			if err != nil {
-				logger.Printf("[server%d] getBlock.Get('time').Int64() failed, err: %v", s.id, err)
-			} else {
-				blockTime := time.Unix(timestamp, 0)
-				desktopTime := time.Now()
-				timeDifference := desktopTime.Sub(blockTime).Seconds()
-				logger.Printf("%s, %d, Time difference between block time and desktop time: %.2f seconds", coinStr, s.id, timeDifference)
-
-				// Update the cache with the new block data.
-				blockCache[blockCacheKey] = &BlockCache{
-					BlockHash: getBlockHash,
-					timeDiff:  timeDifference,
-				}
-				purgeCache(blockCache, config.MaxStoredBlocks)
-			}
-		}
+	// Use BlockCacheService to retrieve or fetch block data
+	cacheService := &BlockCacheService{}
+	blockData, cached, err := cacheService.GetOrFetch(s, coinStr, getBlockHash, heightInt)
+	if err != nil {
+		logger.Printf("[server%2d] Couldn't fetch block data for %s: %s: %v", s.id, coinStr, getBlockHash, err)
+		coinMap.getBlockHash = ""
+		coinMap.timeDiff = -1000
+		return "", 0, false
 	}
 
-	// Exclude coin if the time difference between block time and desktop time is too high.
-	if blockDataCache, exists := blockCache[blockCacheKey]; exists {
-		if blockDataCache.timeDiff < float64(config.MaxBlockTimeDiff) {
-			coinMap.getBlockHash = getBlockHash
-			coinMap.timeDiff = blockDataCache.timeDiff
-		} else {
-			coinMap.getBlockHash = blockDataCache.BlockHash
-			coinMap.timeDiff = -1000 // Mark as unhealthy due to time diff
-			logger.Printf("[server%d] timeDiff too high for %s: %f at height %d", s.id, coinStr, blockDataCache.timeDiff, heightInt)
-		}
+	// Update coin with new block data
+	coinMap.getBlockHash = blockData.BlockHash
+	valid := true
+	if blockData.timeDiff < float64(config.MaxBlockTimeDiff) {
+		coinMap.timeDiff = blockData.timeDiff
 	} else {
-		// Block data could not be fetched or found in cache.
-		coinMap.getBlockHash = ""
 		coinMap.timeDiff = -1000
+		valid = false
 	}
+
+	if valid {
+		return blockData.BlockHash, blockData.timeDiff, cached
+	}
+	return blockData.BlockHash, -1000, cached
 }
 
 // updateCoinData updates the coin map for a single server.
@@ -197,7 +177,7 @@ func (s *Server) updateCoinData() error {
 
 	obj, err := heightsObj.Object()
 	if err != nil {
-		logger.Printf("[server%d]_updateCoinData, error with heights object: %v", s.id, err)
+		logger.Printf("[server%2d]_updateCoinData, error with heights object: %v", s.id, err)
 		s.coinsMap = make(map[string]Coin)
 		return err
 	}
@@ -218,20 +198,23 @@ func (s *Server) updateCoinData() error {
 		if coinMap.getBlockCount != heightInt {
 			coinMap.getBlockCount = heightInt
 			if heightInt > 0 {
-				s.updateCoinWithNewBlock(coinStr, heightInt, &coinMap)
+				blockHash, timeDiff, cached := s.updateCoinWithNewBlock(coinStr, heightInt, &coinMap)
+				if blockHash != "" {
+					if s.hashesStorage[coinStr] == nil {
+						s.hashesStorage[coinStr] = make(map[int]string)
+					}
+					s.hashesStorage[coinStr][heightInt] = blockHash
+					// logger.Printf("[server%d]_New_Block %s | height: %d | hash: %s | timediff: %.2fs | cached: %t",
+					// 	s.id, coinStr, heightInt, blockHash, timeDiff, cached)
+					base := fmt.Sprintf("[server%2d]_New_Block %-5s", s.id, coinStr)
+					logger.Printf("%-25s | height: %9d | hash: %-25.25s... | timediff: %9.2fs | cached: %-5t",
+						base, heightInt, blockHash, timeDiff, cached)
+				}
 			} else {
 				coinMap.getBlockHash = ""
 				coinMap.timeDiff = -1000
 			}
 			s.coinsMap[coinStr] = coinMap
-
-			if s.coinsMap[coinStr].getBlockHash != "" {
-				if s.hashesStorage[coinStr] == nil {
-					s.hashesStorage[coinStr] = make(map[int]string)
-				}
-				s.hashesStorage[coinStr][heightInt] = s.coinsMap[coinStr].getBlockHash
-			}
-			logger.Printf("[server%d]_New_Block %-5s: %-9d:%s\n", s.id, coinStr, s.coinsMap[coinStr].getBlockCount, s.coinsMap[coinStr].getBlockHash)
 		}
 	})
 
@@ -264,7 +247,7 @@ func (s *Server) updateCoinData() error {
 func (servers *Servers) updateCoinDataForAllServers() {
 	for _, server := range servers.Slice {
 		if err := server.updateCoinData(); err != nil {
-			logger.Printf("[server%d] failed to update coin data: %v", server.id, err)
+			logger.Printf("[server%2d] failed to update coin data: %v", server.id, err)
 		}
 	}
 }
@@ -410,7 +393,7 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 				// Delete the non-consensus coin(s) from each affected server's coinMap.
 				for _, serverID := range serverIDs {
 					if server, exists := servers.GetServerByID(serverID); exists {
-						logger.Printf("[server%d] Removing %s from coinMap\n", server.id, coin)
+						logger.Printf("[server%2d] Removing %s from coinMap\n", server.id, coin)
 						delete(server.coinsMap, coin)
 					}
 				}
@@ -470,20 +453,20 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 
 			err := server.server_GetPing()
 			if err != nil {
-				logger.Printf("[server%d]_error   : %v", server.id, err)
+				logger.Printf("[server%2d]_error   : %v", server.id, err)
 			}
 			if server.ping == 1 {
 				startTimer := time.Now()
 				err := server.server_GetHeights()
 				elapsedTimer := time.Since(startTimer)
 				if err != nil {
-					logger.Printf("[server%d]_error getting heights: %v", server.id, err)
+					logger.Printf("[server%2d]_error getting heights: %v", server.id, err)
 				}
 				err = server.server_GetFees()
 				if err != nil {
-					logger.Printf("[server%d]_error getting fees: %v", server.id, err)
+					logger.Printf("[server%2d]_error getting fees: %v", server.id, err)
 				}
-				logger.Printf("[server%d]_Heights : %v %v", server.id, server.getheights, elapsedTimer)
+				logger.Printf("[server%2d]_Heights : %v %v", server.id, server.getheights, elapsedTimer)
 			}
 		}(i)
 	}
@@ -513,6 +496,52 @@ func buildCoinHeightsMap(servers *Servers) (map[string][]int, error) {
 		}
 	}
 	return heightsMap, nil
+}
+
+// BlockCacheService handles fetching and caching of block hashes
+type BlockCacheService struct{}
+
+// GetOrFetch retrieves a block cache entry by coin+hash, fetching it if needed
+func (s *BlockCacheService) GetOrFetch(server *Server, coin, hash string, height int) (*BlockCache, bool, error) {
+	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)
+	if existing, exists := blockCache[blockCacheKey]; exists {
+		return existing, true, nil
+	}
+	blockData, err := s.FetchAndCacheBlock(server, coin, hash, height)
+	if err != nil {
+		return nil, false, err
+	}
+	return blockData, false, nil
+}
+
+// FetchAndCacheBlock fetches block data and stores it in cache
+func (s *BlockCacheService) FetchAndCacheBlock(server *Server, coin, hash string, height int) (*BlockCache, error) {
+	blockData, err := server.server_GetBlock(coin, hash)
+	if err != nil {
+		logger.Printf("[server%2d] Failed fetching block %s for coin %s: %v", server.id, hash, coin, err)
+		return nil, err
+	}
+
+	timestamp, err := blockData.Get("time").Int64()
+	if err != nil {
+		logger.Printf("[server%2d] Invalid timestamp in block %s for coin %s: %v", server.id, hash, coin, err)
+		return nil, err
+	}
+
+	blockTime := time.Unix(timestamp, 0)
+	desktopTime := time.Now()
+	newBlockData := &BlockCache{
+		BlockHash: hash,
+		timeDiff:  desktopTime.Sub(blockTime).Seconds(),
+	}
+
+	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)
+	blockCache[blockCacheKey] = newBlockData
+
+	// Purge cache after adding a new block to keep it under control
+	purgeCache(blockCache, config.MaxStoredBlocks)
+
+	return newBlockData, nil
 }
 
 // CollectBlockHashVotesForConsensusHeight gathers block hash "votes" from each server
@@ -562,29 +591,30 @@ func CollectBlockHashVotesForConsensusHeight(servers *Servers) map[string]map[st
 				continue
 			}
 
-			// If no map for the coin, can't have a hash.
+			// Skip if no storage exists for this coin
 			if server.hashesStorage[coin] == nil {
 				continue
 			}
 
-			// Fetch and cache the hash if it's missing or empty for the consensus height.
-			// This preserves the original logic of re-fetching if a previous attempt failed and stored "".
-			if server.hashesStorage[coin][consensusHeight] == "" {
+			// Lazy fetch if missing hash
+			currentHash := server.hashesStorage[coin][consensusHeight]
+			if currentHash == "" {
 				hash, err := server.server_GetBlockHash(coin, consensusHeight)
 				if err != nil {
 					logger.Printf("CollectBlockHashVotes: error from server_GetBlockHash for server %d, coin %s: %v", server.id, coin, err)
-					// Store an empty string to prevent re-fetching on this cycle, but it won't be counted as a vote.
-					hash = ""
+					currentHash = "" // Store empty to prevent re-fetch
+				} else {
+					currentHash = hash
 				}
-				server.hashesStorage[coin][consensusHeight] = hash
+				server.hashesStorage[coin][consensusHeight] = currentHash
 			}
 
-			// If a valid hash exists, record the vote.
-			if hash := server.hashesStorage[coin][consensusHeight]; hash != "" {
+			// Record vote if valid hash
+			if currentHash != "" {
 				if votes[coin] == nil {
 					votes[coin] = make(map[string][]int)
 				}
-				votes[coin][hash] = append(votes[coin][hash], server.id)
+				votes[coin][currentHash] = append(votes[coin][currentHash], server.id)
 			}
 		}
 	})
@@ -685,102 +715,92 @@ func isHashPresentInCoinStorage(storage map[int]string, hashToFind string) bool 
 // calculateConsensusFees determines the consensus fee for each coin based on the fees
 // reported by all servers. A fee is considered consensus if it's reported by a
 // sufficient ratio of servers (defined by `config.ConsensusThreshold`).
-func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
-	consensus := fastjson.MustParse(`{"result": {}, "error": null}`)
+func buildJSONValue(consensusData map[string]interface{}) *fastjson.Value {
+	arena := fastjson.Arena{}
+	result := arena.NewObject()
+	errNull := arena.NewNull()
 
-	// Extract the keys from the "result" object
-	keys := make([]string, 0, len(counts))
-	for coin := range counts {
-		keys = append(keys, coin)
+	// Build main response object
+	jsonObj := arena.NewObject()
+	jsonObj.Set("result", result)
+	jsonObj.Set("error", errNull)
+
+	// Add sorted coins with their values
+	sortedCoins := make([]string, 0, len(consensusData))
+	for coin := range consensusData {
+		sortedCoins = append(sortedCoins, coin)
+	}
+	sort.Strings(sortedCoins)
+
+	for _, coin := range sortedCoins {
+		switch v := consensusData[coin].(type) {
+		case int:
+			result.Set(coin, arena.NewNumberInt(v))
+		case float64:
+			result.Set(coin, arena.NewNumberFloat64(v))
+		default:
+			logger.Printf("Unexpected type for consensus data: %T", v)
+		}
 	}
 
-	// Sort the keys in alphabetical order
-	sort.Strings(keys)
+	return jsonObj
+}
 
-	// Iterate over the sorted keys and update the "result" object
-	for _, coin := range keys {
-		elementCounts := counts[coin]
+func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
+	consensusData := make(map[string]interface{})
+
+	for _, elementCounts := range counts {
 		totalServers := 0
 		for _, count := range elementCounts {
 			totalServers += count
 		}
 
+		// Process each fee value for the coin
 		for identifier, count := range elementCounts {
-			threshold := float64(count) / float64(totalServers)
-			if threshold >= config.ConsensusThreshold {
+			if ratio := float64(count) / float64(totalServers); ratio >= config.ConsensusThreshold {
 				parts := strings.Split(identifier, ":")
-				valueParsed, _ := fastjson.Parse(parts[1])
-				consensus.Get("result").Set(parts[0], valueParsed)
+				value, err := strconv.ParseFloat(parts[1], 64)
+				if err != nil {
+					logger.Printf("Couldn't parse fee value %s: %v", parts[1], err)
+					continue
+				}
+				consensusData[parts[0]] = value
 			}
 		}
 	}
 
-	return consensus
+	return buildJSONValue(consensusData)
 }
 
 // createGlobalHeightsJSON creates a `fastjson.Value` object representing the global
 // consensus on block heights for all coins. The keys are sorted alphabetically.
 func createGlobalHeightsJSON(mostCommonHeightsRanges map[string][]int) (*fastjson.Value, error) {
-	// Create a new JSON arena
-	arena := &fastjson.Arena{}
-	// Create the result object
-	resultObj := arena.NewObject()
+	consensusData := make(map[string]interface{})
+
 	for coin, heights := range mostCommonHeightsRanges {
 		minHeight := heights[0]
-		for _, height := range heights {
+		for _, height := range heights[1:] {
 			if height < minHeight {
 				minHeight = height
 			}
 		}
-		resultObj.Set(coin, arena.NewNumberInt(minHeight))
+		consensusData[coin] = minHeight
 	}
-	// Get the keys from the resultObj
-	keys := make([]string, 0, len(mostCommonHeightsRanges))
-	for key := range mostCommonHeightsRanges {
-		keys = append(keys, key)
-	}
-	// Sort the keys
-	sort.Strings(keys)
-	// Create the sorted result object
-	sortedResultObj := arena.NewObject()
-	for _, key := range keys {
-		value := resultObj.Get(key)
-		sortedResultObj.Set(key, value)
-	}
-	// Create the main JSON object
-	jsonObj := arena.NewObject()
-	jsonObj.Set("result", sortedResultObj)
-	jsonObj.Set("error", arena.NewNull())
-	return jsonObj, nil
+
+	return buildJSONValue(consensusData), nil
 }
 
 // createCommonHeightServersJSON creates a `fastjson.Value` object that maps each coin
 // to a list of server IDs that are in consensus for that coin's block height.
 func createCommonHeightServersJSON(commonHeightServers map[string][]int) (*fastjson.Value, error) {
-	// Create a new JSON object
-	jsonObj := make(map[string]interface{})
-	// Iterate over the map
-	for key, values := range commonHeightServers {
-		// Create a new JSON object for each key
-		obj := make(map[string]interface{})
-		obj["ids"] = values
-		// Add the object to the main JSON object
-		jsonObj[key] = obj
+	type idStruct struct {
+		IDs []int `json:"ids"`
 	}
-	// Convert the JSON object to bytes
-	jsonBytes, err := json.Marshal(jsonObj)
-	if err != nil {
-		return nil, err
+	result := make(map[string]idStruct)
+	for k, v := range commonHeightServers {
+		result[k] = idStruct{IDs: v}
 	}
-	// Create a new fastjson.Parser
-	parser := &fastjson.Parser{}
-	// Parse the bytes into a fastjson.Value
-	value, err := parser.ParseBytes(jsonBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return value, nil
+	return ParseToFastjson(result)
 }
 
 // calculateRatio computes the ratio of servers that agree on the most common height range

@@ -10,10 +10,10 @@ import (
 	"github.com/valyala/fastjson"
 )
 
-func TestUpdateGlobalFeesConsensus(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalFeesConsensus", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalFeesConsensus (threshold=%.16f)", 0.6666666666666666)
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalFeesConsensus")
+func TestServersUpdateGlobalFeesConsensus(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalFeesConsensus", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFeesConsensus (threshold=%.16f)", 0.6666666666666666)
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFeesConsensus")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -61,10 +61,10 @@ func TestUpdateGlobalFeesConsensus(t *testing.T) {
 	assert.Equal(t, 0.00002, ltc.GetFloat64(), "LTC fee should be 0.00002")
 }
 
-func TestUpdateGlobalFees_4servers(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalFees_4servers", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalFees_4servers (threshold=%.16f)", 0.6666666666666666)
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalFees_4servers")
+func TestServersUpdateGlobalFees_4servers(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalFees_4servers", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_4servers (threshold=%.16f)", 0.6666666666666666)
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_4servers")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -115,10 +115,10 @@ func TestUpdateGlobalFees_4servers(t *testing.T) {
 	assert.Equal(t, 0.00002, ltc.GetFloat64(), "LTC fee should be 0.00002")
 }
 
-func TestUpdateGlobalFees_10servers(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalFees_10servers", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalFees_10servers (threshold=%.16f)", 0.6666666666666666)
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalFees_10servers")
+func TestServersUpdateGlobalFees_10servers(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalFees_10servers", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_10servers (threshold=%.16f)", 0.6666666666666666)
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_10servers")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -158,10 +158,10 @@ func TestUpdateGlobalFees_10servers(t *testing.T) {
 	}
 }
 
-func TestUpdateGlobalHeightsConsensus(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalHeightsConsensus", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalHeightsConsensus")
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalHeightsConsensus")
+func TestServersUpdateGlobalHeightsConsensus(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalHeightsConsensus", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeightsConsensus")
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeightsConsensus")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -217,10 +217,10 @@ func TestUpdateGlobalHeightsConsensus(t *testing.T) {
 	assert.Equal(t, 3, idsLen, "Should have 3 servers for BTC")
 }
 
-func TestUpdateGlobalHeights_4servers(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalHeights_4servers", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalHeights_4servers")
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalHeights_4servers")
+func TestServersUpdateGlobalHeights_4servers(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalHeights_4servers", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_4servers")
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_4servers")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -270,10 +270,10 @@ func TestUpdateGlobalHeights_4servers(t *testing.T) {
 	assert.Equal(t, 2000000, ltcHeight, "LTC height should be consensus minimum")
 }
 
-func TestUpdateGlobalHeights_10servers(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalHeights_10servers", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalHeights_10servers")
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalHeights_10servers")
+func TestServersUpdateGlobalHeights_10servers(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalHeights_10servers", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_10servers")
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_10servers")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -312,10 +312,10 @@ func TestUpdateGlobalHeights_10servers(t *testing.T) {
 	assert.Equal(t, 2000000, ltcHeight, "LTC height should be consensus minimum")
 }
 
-func TestHashConsensusDetection(t *testing.T) {
-	defer recordTestResult("TestHashConsensusDetection", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestHashConsensusDetection")
-	defer log.Printf("TEST_UNIT: Finished TestHashConsensusDetection")
+func TestServersHashConsensusDetection(t *testing.T) {
+	defer recordTestResult("TestServersHashConsensusDetection", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersHashConsensusDetection")
+	defer log.Printf("TEST_UNIT: Finished TestServersHashConsensusDetection")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -382,10 +382,10 @@ func TestHashConsensusDetection(t *testing.T) {
 	log.Printf("TEST_UNIT: Found non-consensus server: id=%d", nonConsensus["BTC"][0])
 }
 
-func TestConcurrentServerUpdates(t *testing.T) {
-	defer recordTestResult("TestConcurrentServerUpdates", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestConcurrentServerUpdates")
-	defer log.Printf("TEST_UNIT: Finished TestConcurrentServerUpdates")
+func TestServersConcurrentServerUpdates(t *testing.T) {
+	defer recordTestResult("TestServersConcurrentServerUpdates", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersConcurrentServerUpdates")
+	defer log.Printf("TEST_UNIT: Finished TestServersConcurrentServerUpdates")
 
 	servers := &Servers{Slice: make([]*Server, 0, 20)}
 
@@ -420,14 +420,14 @@ func TestConcurrentServerUpdates(t *testing.T) {
 	log.Printf("TEST_UNIT: Verified %d unique server IDs", serverCount)
 }
 
-func TestUpdateGlobalFees_SingleServer(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalFees_SingleServer", t.Failed())
+func TestServersUpdateGlobalFees_SingleServer(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalFees_SingleServer", t.Failed())
 	
 	oldConfig := config
 	defer func() { config = oldConfig }()
 	config = &Config{ConsensusThreshold: 0.6666666666666666}
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalFees_SingleServer (threshold=%.16f)", config.ConsensusThreshold)
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalFees_SingleServer")
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_SingleServer (threshold=%.16f)", config.ConsensusThreshold)
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_SingleServer")
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -463,14 +463,14 @@ func TestUpdateGlobalFees_SingleServer(t *testing.T) {
 	}
 }
 
-func TestUpdateGlobalHeights_SingleServer(t *testing.T) {
-	defer recordTestResult("TestUpdateGlobalHeights_SingleServer", t.Failed())
+func TestServersUpdateGlobalHeights_SingleServer(t *testing.T) {
+	defer recordTestResult("TestServersUpdateGlobalHeights_SingleServer", t.Failed())
 	
 	oldConfig := config
 	defer func() { config = oldConfig }()
 	config = &Config{ConsensusThreshold: 0.6666666666666666}
-	log.Printf("TEST_UNIT: Starting TestUpdateGlobalHeights_SingleServer")
-	defer log.Printf("TEST_UNIT: Finished TestUpdateGlobalHeights_SingleServer")
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_SingleServer")
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_SingleServer")
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -494,10 +494,10 @@ func TestUpdateGlobalHeights_SingleServer(t *testing.T) {
 	assert.Equal(t, 2000000, ltcHeight, "LTC height should match single server value")
 }
 
-func TestHashConsensusDetection_SingleServer(t *testing.T) {
-	defer recordTestResult("TestHashConsensusDetection_SingleServer", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestHashConsensusDetection_SingleServer")
-	defer log.Printf("TEST_UNIT: Finished TestHashConsensusDetection_SingleServer")
+func TestServersHashConsensusDetection_SingleServer(t *testing.T) {
+	defer recordTestResult("TestServersHashConsensusDetection_SingleServer", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersHashConsensusDetection_SingleServer")
+	defer log.Printf("TEST_UNIT: Finished TestServersHashConsensusDetection_SingleServer")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
@@ -540,10 +540,10 @@ func TestHashConsensusDetection_SingleServer(t *testing.T) {
 	log.Printf("TEST_UNIT: No non-consensus servers detected as expected")
 }
 
-func TestBlockCacheManagement(t *testing.T) {
-	defer recordTestResult("TestBlockCacheManagement", t.Failed())
-	log.Printf("TEST_UNIT: Starting TestBlockCacheManagement")
-	defer log.Printf("TEST_UNIT: Finished TestBlockCacheManagement")
+func TestServersBlockCacheManagement(t *testing.T) {
+	defer recordTestResult("TestServersBlockCacheManagement", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement")
+	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement")
 
 	// Reset global cache
 	blockCache = make(map[string]*BlockCache)

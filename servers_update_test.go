@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sort"
 	"sync"
 	"testing"
 )
@@ -44,7 +45,16 @@ func PrintFinalSummary() {
 
 	log.Println("TEST_UNIT: ========== FINAL TEST SUMMARY ==========")
 	passed, failed := 0, 0
-	for test, success := range testResults.results {
+
+	// Sort test names
+	var sortedTests []string
+	for test := range testResults.results {
+		sortedTests = append(sortedTests, test)
+	}
+	sort.Strings(sortedTests)
+
+	for _, test := range sortedTests {
+		success := testResults.results[test]
 		if success {
 			log.Printf("TEST_UNIT: PASS: %s", test)
 			passed++
@@ -53,6 +63,7 @@ func PrintFinalSummary() {
 			failed++
 		}
 	}
+
 	log.Printf("TEST_UNIT: ---")
 	log.Printf("TEST_UNIT: %d passed, %d failed", passed, failed)
 	log.Println("TEST_UNIT: ========================================")
@@ -66,8 +77,8 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestServerIDConsistency(t *testing.T) {
-	defer recordTestResult("TestServerIDConsistency", t.Failed())
+func TestUpdatesServersIDConsistency(t *testing.T) {
+	defer recordTestResult("TestUpdatesServersIDConsistency", t.Failed())
 	log.Print("TEST_UNIT: Starting enhanced server ID consistency test")
 	testServer = createMockProvider([]string{
 		"http://server1:80",
