@@ -32,11 +32,27 @@ func (servers *Servers) AddServer(s *Server) int {
 	if servers.Slice == nil {
 		servers.Slice = []*Server{}
 	}
-	// Assign a unique ID.
-	s.id = len(servers.Slice) + 1
+	// Create URL-ID map if needed
+	if servers.urlToID == nil {
+		servers.urlToID = make(map[string]int)
+	}
+
+	// Check if URL exists in map and assign stored ID
+	if id, exists := servers.urlToID[s.url]; exists {
+		s.id = id
+	} else {
+		// New server: find next available ID
+		maxID := 0
+		for _, server := range servers.Slice {
+			if server.id > maxID {
+				maxID = server.id
+			}
+		}
+		s.id = maxID + 1
+		servers.urlToID[s.url] = s.id
+	}
 
 	servers.Slice = append(servers.Slice, s)
-	//servers.Map[s.id] = *s
 	s.getfees = getDefaultJSONResponse()
 	s.getheights = getDefaultJSONResponse()
 	s.coinsMap = make(map[string]Coin)
@@ -53,6 +69,10 @@ func (servers *Servers) RemoveServer(server *Server) {
 	for i, srv := range servers.Slice {
 		if srv == server {
 			servers.Slice = append(servers.Slice[:i], servers.Slice[i+1:]...)
+
+			// Remove URL from map to allow new ID assignment.
+			delete(servers.urlToID, server.url)
+
 			break
 		}
 	}

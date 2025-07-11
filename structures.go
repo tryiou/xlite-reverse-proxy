@@ -30,6 +30,9 @@ type Servers struct {
 	GlobalHeights       *fastjson.Value
 	GlobalFees          *fastjson.Value
 	GlobalCoinServerIDs *fastjson.Value
+
+	// URL to Server.ID mapping for ID consistency
+	urlToID map[string]int
 }
 
 type BlockCache struct {
