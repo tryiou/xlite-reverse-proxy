@@ -6,8 +6,6 @@ package main
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,17 +21,31 @@ import (
 	"github.com/valyala/fastjson"
 )
 
-// reverseProxy starts a reverse proxy server on the specified port.
-func reverseProxy(port int, servers *Servers) {
-	logger.Print("ReverseProxy started, Listening on ", port)
+// Helper function for "Service unavailable" responses
+func makeServiceUnavailableResponse() *fastjson.Value {
+	return fastjson.MustParse(`{"result": null, "error": "Service unavailable"}`)
+}
 
-	reverseProxyHandler := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+func logCachedRequest(ip, endpoint string, start time.Time) {
+	elapsed := time.Since(start)
+	logger.Printf("[revProxy_Serv] %s request %s relayed OK from cache, exec_timer:%s\n", ip, endpoint, elapsed)
+}
+
+func writeResponseChecked(w http.ResponseWriter, resp *fastjson.Value) error {
+	if err := WriteJSONResponse(w, resp); err != nil {
+		logger.Printf("*error writing response: %v", err)
+		return err
+	}
+	return nil
+}
+
+// reverseProxy starts a reverse proxy server on the specified port.
+func reverseProxyHandler(servers *Servers) http.HandlerFunc {
+	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		requestData, err := extractRequestData(req)
 		if err != nil {
 			return
 		}
-
-		rw.Header().Set("Content-Type", "application/json;charset=UTF-8")
 
 		// Check if the request path is in the acceptedPaths list
 		if !isPathAccepted(req.URL.Path) {
@@ -46,50 +58,34 @@ func reverseProxy(port int, servers *Servers) {
 
 		switch {
 		case req.URL.Path == "/servers" || requestData.Method == "servers":
-			response := getDefaultJSONResponse() // a base response with result and error fields
-			response.Set("result", servers.GlobalCoinServerIDs)
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
+			response := servers.GlobalCoinServerIDs
+			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-
-			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request servers relayed OK from cache, exec_timer:%s\n", requestData.Ip, elapsedTimer)
+			logCachedRequest(requestData.Ip, "servers", startTimer)
 			return
 
 		case req.URL.Path == "/heights" || req.URL.Path == "/height" || requestData.Method == "heights" || requestData.Method == "height":
 			response := servers.GlobalHeights
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
+			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-
-			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request heights relayed OK from cache, exec_timer:%s\n", requestData.Ip, elapsedTimer)
+			logCachedRequest(requestData.Ip, "heights", startTimer)
 			return
 
 		case req.URL.Path == "/fees" || requestData.Method == "fees":
 			response := servers.GlobalFees
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
+			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-
-			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request fees relayed OK from cache, exec_timer:%s\n", requestData.Ip, elapsedTimer)
+			logCachedRequest(requestData.Ip, "fees", startTimer)
 			return
 
 		case req.URL.Path == "/ping" || requestData.Method == "ping":
 			response := fastjson.MustParse("1")
-			err := writeResponse(rw, response)
-			if err != nil {
-				logger.Printf("*error Failed to write response: %v", err)
+			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-
 			elapsedTimer := time.Since(startTimer)
 			logger.Printf("[revProxy_Serv] %s request ping relayed OK, exec_timer:%s\n", requestData.Ip, elapsedTimer)
 			return
@@ -101,7 +97,7 @@ func reverseProxy(port int, servers *Servers) {
 				return
 			}
 
-			coin, err := extractCoinFromParams(requestData)
+			coin, err := extractCoin(requestData)
 			if err != nil {
 				logger.Printf("*error Failed to extract coin from params: %v", err)
 				return
@@ -110,6 +106,8 @@ func reverseProxy(port int, servers *Servers) {
 			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, 3)
 			if err != nil {
 				logger.Printf("*error: %v", err)
+				response := fastjson.MustParse(`{"result": null, "error": "No valid server for ` + coin + `"}`)
+				_ = WriteJSONResponse(rw, response)
 				return
 			}
 
@@ -117,9 +115,14 @@ func reverseProxy(port int, servers *Servers) {
 		}
 	})
 
+}
+
+func reverseProxy(port int, servers *Servers) {
+	logger.Print("ReverseProxy started, Listening on ", port)
+
 	srv := &http.Server{
 		Addr:     ":" + strconv.Itoa(port),
-		Handler:  limit(reverseProxyHandler),
+		Handler:  limit(reverseProxyHandler(servers)),
 		ErrorLog: log.New(logger.Writer(), "", log.LstdFlags),
 	}
 
@@ -135,20 +138,24 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		randomValidServerID, err := servers.GetRandomValidServerID(coin)
 		if err != nil {
 			logger.Printf("*error failed to get random valid server, method: %s, error: %v", requestData.Method, err)
-			orgResponse := fastjson.MustParse(`{"result": null, "error": "No valid server for ` + coin + `"}`)
-			_ = writeResponse(rw, orgResponse)
+			sanitizedResponse := makeServiceUnavailableResponse()
+			_ = WriteJSONResponse(rw, sanitizedResponse)
 			return nil, err
 		}
 
 		server, exists := servers.GetServerByID(randomValidServerID)
 		if !exists {
 			logger.Println("*error Server not found")
+			sanitizedResponse := makeServiceUnavailableResponse()
+			_ = WriteJSONResponse(rw, sanitizedResponse)
 			return nil, fmt.Errorf("server not found")
 		}
 
 		err = updateRequestHeaders(req, &server, *requestData)
 		if err != nil {
 			logger.Printf("*error updateRequestHeaders: %v", err)
+			sanitizedResponse := makeServiceUnavailableResponse()
+			_ = WriteJSONResponse(rw, sanitizedResponse)
 			return nil, err
 		}
 
@@ -165,6 +172,8 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	}
 
 	logger.Println("All retries exhausted. Unable to process the request.")
+	sanitizedResponse := makeServiceUnavailableResponse()
+	_ = WriteJSONResponse(rw, sanitizedResponse)
 	return nil, fmt.Errorf("all retries exhausted")
 }
 
@@ -217,7 +226,7 @@ func handleOriginServerResponse(rw http.ResponseWriter, req *http.Request, serve
 		return fmt.Errorf("failed to parse and normalize response: %v", err)
 	}
 
-	err = writeResponse(rw, orgResponse)
+	err = WriteJSONResponse(rw, orgResponse)
 	if err != nil {
 		return fmt.Errorf("failed to write response: %v", err)
 	}
@@ -225,19 +234,15 @@ func handleOriginServerResponse(rw http.ResponseWriter, req *http.Request, serve
 	return nil
 }
 
-// extractCoinFromParams extracts the coin from the request parameters.
-func extractCoinFromParams(requestData RequestData) (string, error) {
-	var firstParam string
-	var ok bool
-
-	if len(requestData.Params) > 0 {
-		firstParam, ok = requestData.Params[0].(string)
-		if !ok {
-			return "", errors.New("invalid type for firstParam")
-		}
+func extractCoin(requestData RequestData) (string, error) {
+	if len(requestData.Params) == 0 {
+		return "", errors.New("missing coin parameter")
 	}
-
-	return firstParam, nil
+	coin, ok := requestData.Params[0].(string)
+	if !ok {
+		return "", errors.New("invalid coin type")
+	}
+	return coin, nil
 }
 
 // decompressResponseBody decompresses the response body based on the content encoding.
@@ -253,25 +258,6 @@ func decompressResponseBody(response *http.Response) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported compression algorithm: %s", contentEncoding)
 	}
-}
-
-// decompressGzip decompresses a gzip-compressed response body.
-func decompressGzip(input io.Reader) ([]byte, error) {
-	reader, err := gzip.NewReader(input)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	return io.ReadAll(reader)
-}
-
-// decompressDeflate decompresses a deflate-compressed response body.
-func decompressDeflate(input io.Reader) ([]byte, error) {
-	reader := flate.NewReader(input)
-	defer reader.Close()
-
-	return io.ReadAll(reader)
 }
 
 // extractRequestData extracts the method, parameters, and client IP from the request.
@@ -376,13 +362,6 @@ func parseAndNormalizeResponse(responseBody []byte, server *Server) (*fastjson.V
 	}
 
 	return parsedResponse, nil
-}
-
-// writeResponse writes the response to the client.
-func writeResponse(rw http.ResponseWriter, response *fastjson.Value) error {
-	rw.WriteHeader(http.StatusOK)
-	_, err := rw.Write(response.MarshalTo(nil))
-	return err
 }
 
 // logRequest logs the request details.

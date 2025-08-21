@@ -1,7 +1,12 @@
 package main
 
 import (
+	"compress/flate"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
 	"github.com/valyala/fastjson"
@@ -29,6 +34,22 @@ func parseJSON(data []byte) (*fastjson.Value, error) {
 	return value, nil
 }
 
+// WriteJSONResponse writes a JSON response with proper headers
+func WriteJSONResponse(w http.ResponseWriter, value *fastjson.Value) error {
+	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	_, err := w.Write(value.MarshalTo(nil))
+	return err
+}
+
+// ParseToFastjson converts any Go value to fastjson.Value
+func ParseToFastjson(data interface{}) (*fastjson.Value, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return parseJSON(jsonBytes)
+}
+
 func purgeCache(blockCache map[string]*BlockCache, maxStoredBlocks int) {
 	// Create a map to keep track of the number of entries for each coin.
 	coinCountMap := make(map[string]int)
@@ -53,6 +74,23 @@ func purgeCache(blockCache map[string]*BlockCache, maxStoredBlocks int) {
 			}
 		}
 	}
+}
+
+func decompressGzip(input io.Reader) ([]byte, error) {
+	reader, err := gzip.NewReader(input)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	return io.ReadAll(reader)
+}
+
+func decompressDeflate(input io.Reader) ([]byte, error) {
+	reader := flate.NewReader(input)
+	defer reader.Close()
+
+	return io.ReadAll(reader)
 }
 
 func removeNonPrintableChars(s string) string {
