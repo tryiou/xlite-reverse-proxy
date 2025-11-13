@@ -88,7 +88,7 @@ func createDefaultConfig(configFile string) (*Config, error) {
 		},
 		MaxStoredBlocks:    3,
 		MaxBlockTimeDiff:   7200,
-		HttpTimeout:        8,
+		HttpTimeout:        30,
 		RateLimit:          100,
 		MaxLogSize:         50 * 1024 * 1024, // 50 MB
 		ConsensusThreshold: 2.0 / 3.0,        // 66% consensus rule
