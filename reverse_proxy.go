@@ -21,9 +21,26 @@ import (
 	"github.com/valyala/fastjson"
 )
 
-// Helper function for "Service unavailable" responses
+// Helper functions for standardized error responses
 func makeServiceUnavailableResponse() *fastjson.Value {
 	return fastjson.MustParse(`{"result": null, "error": "Service unavailable"}`)
+}
+
+func makeErrorResponse(message string, details ...string) *fastjson.Value {
+	if len(details) > 0 {
+		return fastjson.MustParse(fmt.Sprintf(`{"result": null, "error": "%s", "details": "%s"}`, message, details[0]))
+	}
+	return fastjson.MustParse(fmt.Sprintf(`{"result": null, "error": "%s"}`, message))
+}
+
+func logError(operation, message string, err error) {
+	logger.Printf("*error %s: %v", operation, err)
+}
+
+func writeErrorResponse(w http.ResponseWriter, status int, message string, details ...string) {
+	w.WriteHeader(status)
+	response := makeErrorResponse(message, details...)
+	_ = WriteJSONResponse(w, response)
 }
 
 func logCachedRequest(ip, endpoint string, start time.Time) {
@@ -44,12 +61,14 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		requestData, err := extractRequestData(req)
 		if err != nil {
+			logError("extractRequestData", "failed to extract request data", err)
+			writeErrorResponse(rw, http.StatusBadRequest, "Failed to extract request data")
 			return
 		}
 
 		// Check if the request path is in the acceptedPaths list
 		if !isPathAccepted(req.URL.Path) {
-			logger.Print("*error ", req.URL.Path, " not in the acceptedPaths list ", requestData.Ip)
+			logError("isPathAccepted", "invalid path", fmt.Errorf("%s not in accepted paths", req.URL.Path))
 			http.NotFound(rw, req)
 			return
 		}
@@ -92,22 +111,22 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 
 		default:
 			if !isMethodAccepted(requestData.Method) {
-				logger.Print("*error ", requestData.Method, " not in the acceptedMethods list ", requestData.Ip)
+				logError("isMethodAccepted", "invalid method", fmt.Errorf("%s not in accepted methods", requestData.Method))
 				http.NotFound(rw, req)
 				return
 			}
 
 			coin, err := extractCoin(requestData)
 			if err != nil {
-				logger.Printf("*error Failed to extract coin from params: %v", err)
+				logError("extractCoin", "failed to extract coin from params", err)
+				writeErrorResponse(rw, http.StatusBadRequest, "Failed to extract coin parameter")
 				return
 			}
 
 			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, 3)
 			if err != nil {
-				logger.Printf("*error: %v", err)
-				response := fastjson.MustParse(`{"result": null, "error": "No valid server for ` + coin + `"}`)
-				_ = WriteJSONResponse(rw, response)
+				logError("retryWithRandomValidServer", "no valid server available", err)
+				writeErrorResponse(rw, http.StatusServiceUnavailable, "No valid server for "+coin)
 				return
 			}
 
@@ -137,15 +156,14 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	for i := 0; i < maxRetries; i++ {
 		randomValidServerID, err := servers.GetRandomValidServerID(coin)
 		if err != nil {
-			logger.Printf("*error failed to get random valid server, method: %s, error: %v", requestData.Method, err)
-			sanitizedResponse := makeServiceUnavailableResponse()
-			_ = WriteJSONResponse(rw, sanitizedResponse)
+			logError("getRandomValidServer", "failed to get random valid server", err)
+			writeErrorResponse(rw, http.StatusServiceUnavailable, "No valid server available")
 			return nil, err
 		}
 
 		server, exists := servers.GetServerByID(randomValidServerID)
 		if !exists {
-			logger.Println("*error Server not found")
+			logError("GetServerByID", "server not found", fmt.Errorf("server ID %d not found", randomValidServerID))
 			sanitizedResponse := makeServiceUnavailableResponse()
 			_ = WriteJSONResponse(rw, sanitizedResponse)
 			return nil, fmt.Errorf("server not found")
@@ -153,9 +171,8 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 
 		err = updateRequestHeaders(req, &server, *requestData)
 		if err != nil {
-			logger.Printf("*error updateRequestHeaders: %v", err)
-			sanitizedResponse := makeServiceUnavailableResponse()
-			_ = WriteJSONResponse(rw, sanitizedResponse)
+			logError("updateRequestHeaders", "failed to update request headers", err)
+			writeErrorResponse(rw, http.StatusServiceUnavailable, "Failed to update request headers")
 			return nil, err
 		}
 
@@ -165,7 +182,7 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 				return nil, err
 			}
 			servers.RemoveServerFromGlobalCoinList(coin, server.id)
-			logger.Printf("*error %d handleOriginServerResponse: %v pruning server[%d]", i, err, server.id)
+			logError("handleOriginServerResponse", "server response failed", err)
 		} else {
 			return &server, nil
 		}
@@ -287,7 +304,7 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 	} else {
 		ip, _, err = net.SplitHostPort(req.RemoteAddr)
 		if err != nil {
-			logger.Printf("error extracting client ip from request: %v", err)
+			logError("extractClientIP", "failed to extract client IP", err)
 			return RequestData{Method: "null", Params: nil, Ip: ""}, err
 		}
 	}
@@ -299,7 +316,8 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 	} else if req.Method == http.MethodPost {
 		err := json.NewDecoder(rdr).Decode(&requestData)
 		if err != nil {
-			return RequestData{Method: "null", Params: nil, Ip: ip}, nil
+			logError("JSON decode", "failed to parse request JSON", err)
+			return RequestData{}, fmt.Errorf("invalid JSON format: %w", err)
 		}
 		requestData.Ip = ip
 		return requestData, nil

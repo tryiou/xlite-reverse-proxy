@@ -43,18 +43,18 @@ func (s *Server) server_GetPing() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		s.setDefaultResponses()
-		return fmt.Errorf("server_GetPing, failed to make HTTP request: %w", err)
+		return fmt.Errorf("failed to make HTTP request: %w", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.setDefaultResponses()
-		return fmt.Errorf("server_GetPing, failed to parse JSON response: %w", err)
+		return fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 
 	result := jsonResp.Get("result")
 	if result == nil {
 		s.setDefaultResponses()
-		return fmt.Errorf("server_GetPing, error: failed to retrieve the 'result' element")
+		return fmt.Errorf("failed to retrieve the 'result' element")
 	}
 
 	if result.Type() == fastjson.TypeNumber && result.GetInt() == 1 {
@@ -70,21 +70,21 @@ func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value
 	payloadParams := []interface{}{coin, blockHash, "true"}
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("server_GetBlock: failed to make HTTP request: %w", err)
+		return nil, fmt.Errorf("failed to make HTTP request: %w", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
-		return nil, fmt.Errorf("server_GetBlock: failed to parse JSON response: %w", err)
+		return nil, fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 
 	jsonError := jsonResp.Get("error")
 	if jsonError.Type() != fastjson.TypeNull {
-		return nil, fmt.Errorf("server_GetBlock: JSON response contains an error: %s", jsonError.String())
+		return nil, fmt.Errorf("JSON response contains an error: %s", jsonError.String())
 	}
 
 	jsonResult := jsonResp.Get("result")
 	if jsonResult.Type() != fastjson.TypeObject {
-		return nil, fmt.Errorf("server_GetBlock: JSON response does not contain a valid block data")
+		return nil, fmt.Errorf("JSON response does not contain valid block data")
 	}
 
 	return jsonResult, nil
@@ -94,21 +94,21 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 	payloadMethod := "getblockhash"
 	payloadParams := []interface{}{coin, height}
 	if height == -1 {
-		logger.Printf("server_GetBlockHash called with height = -1, server:%d,%s,%d", s.id, coin, height)
+		logger.Printf("*error server_GetBlockHash called with height = -1, server:%d,%s,%d", s.id, coin, height)
 		return "", nil
 	}
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
-		return "", fmt.Errorf("server_GetBlockHash: failed to make HTTP request: %w", err)
+		return "", fmt.Errorf("failed to make HTTP request: %w", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
-		return "", fmt.Errorf("server_GetBlockHash: failed to parse JSON response: %w", err)
+		return "", fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 
 	jsonError := jsonResp.Get("error")
 	if jsonError.Type() != fastjson.TypeNull {
-		return "", fmt.Errorf("server_GetBlockHash: JSON response contains an error: %s", jsonError.String())
+		return "", fmt.Errorf("JSON response contains an error: %s", jsonError.String())
 	}
 	return removeNonPrintableChars(jsonResp.Get("result").String()), nil
 }
@@ -119,12 +119,12 @@ func (s *Server) server_GetFees() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
-		return fmt.Errorf("server_GetFees, failed to make HTTP request: %w", err)
+		return fmt.Errorf("failed to make HTTP request: %w", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
-		return fmt.Errorf("server_GetFees, failed to parse JSON response: %w", err)
+		return fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 	s.getfees = jsonResp
 	return nil
@@ -136,12 +136,12 @@ func (s *Server) server_GetHeights() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
-		return fmt.Errorf("server_GetHeights, failed to make HTTP request: %w", err)
+		return fmt.Errorf("failed to make HTTP request: %w", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
-		return fmt.Errorf("server_GetHeights, failed to parse JSON response: %w", err)
+		return fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 	s.getheights = jsonResp
 	s.sortGetHeightsKeys()
