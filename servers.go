@@ -533,6 +533,7 @@ func (s *BlockCacheService) FetchAndCacheBlock(server *Server, coin, hash string
 	newBlockData := &BlockCache{
 		BlockHash: hash,
 		timeDiff:  desktopTime.Sub(blockTime).Seconds(),
+		cachedAt:  desktopTime, // Track when this was cached
 	}
 
 	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)

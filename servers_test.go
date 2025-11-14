@@ -1,10 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/valyala/fastjson"
@@ -131,12 +135,14 @@ func TestServersUpdateGlobalFees_10servers(t *testing.T) {
 		if i >= 7 { // 7 servers agree, 3 disagree
 			btcFee = 0.00002
 		}
-		if i >= 6 { // 6 servers for LTC consensus, 4 disagree
+		if i < 6 { // 6 servers for LTC consensus, 4 disagree - FIXED: was i < 7
+			ltcFee = 0.00002
+		} else {
 			ltcFee = 0.00003
 		}
 
 		servers.Slice[i] = &Server{
-			id: i+1,
+			id: i + 1,
 			coinsMap: map[string]Coin{
 				"BTC": {fee: btcFee},
 				"LTC": {fee: ltcFee},
@@ -293,7 +299,7 @@ func TestServersUpdateGlobalHeights_10servers(t *testing.T) {
 		}
 
 		servers.Slice[i] = &Server{
-			id: i+1,
+			id: i + 1,
 			coinsMap: map[string]Coin{
 				"BTC": {getBlockCount: btcHeight},
 				"LTC": {getBlockCount: ltcHeight},
@@ -325,6 +331,7 @@ func TestServersHashConsensusDetection(t *testing.T) {
 	blockCache["BTC_consensus_hash"] = &BlockCache{
 		BlockHash: "0000...abc",
 		timeDiff:  15,
+		cachedAt:  time.Now(),
 	}
 	log.Printf("TEST_UNIT: Set up block cache for BTC block 800000")
 
@@ -506,6 +513,7 @@ func TestServersHashConsensusDetection_SingleServer(t *testing.T) {
 	blockCache["BTC_single"] = &BlockCache{
 		BlockHash: "0000...abc",
 		timeDiff:  15,
+		cachedAt:  time.Now(),
 	}
 
 	servers := &Servers{Slice: []*Server{
@@ -549,28 +557,216 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	blockCache = make(map[string]*BlockCache)
 	log.Printf("TEST_UNIT: Reset global block cache")
 
-	// Create multiple entries for the same blockhash to trigger purging
-	// This matches how purgeCache groups by BlockHash
-	blockHash := "00000000000000000001325f6c0bdd010d8013dcfe11d143c771608a3beec9d3"
-	for i := 0; i < 15; i++ {
-		key := "BTC_hash_" + strconv.Itoa(i)
+	// Test per-coin cache limits with multiple coins
+	maxStoredBlocks := 3
+	
+	// Create BTC entries - should be limited to maxStoredBlocks per coin
+	// Entry 0 should be oldest, entry 4 should be newest
+	for i := 0; i < 5; i++ {
+		key := fmt.Sprintf("BTC_hash_%d", i)
 		blockCache[key] = &BlockCache{
-			BlockHash: blockHash,
+			BlockHash: "btc_block_hash_" + strconv.Itoa(i),
 			timeDiff:  float64(i),
+			cachedAt:  time.Now().Add(time.Duration(-5+i) * time.Minute), // Earlier entries are older
 		}
 	}
 
+	// Create LTC entries - should be limited independently
+	// Entry 0 should be oldest, entry 3 should be newest
+	for i := 0; i < 4; i++ {
+		key := fmt.Sprintf("LTC_hash_%d", i)
+		blockCache[key] = &BlockCache{
+			BlockHash: "ltc_block_hash_" + strconv.Itoa(i),
+			timeDiff:  float64(i),
+			cachedAt:  time.Now().Add(time.Duration(-4+i) * time.Minute), // Earlier entries are older
+		}
+	}
+
+	// Create DOGE entries - should be under limit, not affected
+	for i := 0; i < 2; i++ {
+		key := fmt.Sprintf("DOGE_hash_%d", i)
+		blockCache[key] = &BlockCache{
+			BlockHash: "doge_block_hash_" + strconv.Itoa(i),
+			timeDiff:  float64(i),
+			cachedAt:  time.Now().Add(time.Duration(-2+i) * time.Minute), // Earlier entries are older
+		}
+	}
+
+	initialCacheSize := len(blockCache)
+	log.Printf("TEST_UNIT: Initial cache size: %d (BTC:5, LTC:4, DOGE:2)", initialCacheSize)
+	assert.Equal(t, 11, initialCacheSize, "Should start with 11 entries")
+
+	// Purge cache with per-coin limit
+	purgeCache(blockCache, maxStoredBlocks)
+	
+	finalCacheSize := len(blockCache)
+	log.Printf("TEST_UNIT: Final cache size after purge: %d", finalCacheSize)
+	
+	// Verify per-coin counts
+	btcCount := 0
+	ltcCount := 0
+	dogeCount := 0
+	
+	for key := range blockCache {
+		if strings.HasPrefix(key, "BTC_") {
+			btcCount++
+		} else if strings.HasPrefix(key, "LTC_") {
+			ltcCount++
+		} else if strings.HasPrefix(key, "DOGE_") {
+			dogeCount++
+		}
+	}
+	
+	log.Printf("TEST_UNIT: Final counts - BTC: %d, LTC: %d, DOGE: %d", btcCount, ltcCount, dogeCount)
+	
+	// BTC: 5 entries -> should be reduced to maxStoredBlocks (3)
+	assert.Equal(t, maxStoredBlocks, btcCount, "BTC should have exactly %d entries after purge", maxStoredBlocks)
+	
+	// LTC: 4 entries -> should be reduced to maxStoredBlocks (3)  
+	assert.Equal(t, maxStoredBlocks, ltcCount, "LTC should have exactly %d entries after purge", maxStoredBlocks)
+	
+	// DOGE: 2 entries -> should remain unchanged (under limit)
+	assert.Equal(t, 2, dogeCount, "DOGE should remain unchanged at 2 entries")
+	
+	// Total should be 3 + 3 + 2 = 8
+	expectedTotal := maxStoredBlocks + maxStoredBlocks + 2
+	assert.Equal(t, expectedTotal, finalCacheSize, "Final cache size should be %d", expectedTotal)
+	
+	// Verify oldest entries were removed (first entries in slice should be gone)
+	// For BTC: entries 0,1 should be removed, leaving 2,3,4
+	// For LTC: entry 0 should be removed, leaving 1,2,3
+	remainingBTC := make([]int, 0)
+	remainingLTC := make([]int, 0)
+	
+	for key := range blockCache {
+		if strings.HasPrefix(key, "BTC_hash_") {
+			if suffix := strings.TrimPrefix(key, "BTC_hash_"); suffix != "" {
+				if idx, err := strconv.Atoi(suffix); err == nil {
+					remainingBTC = append(remainingBTC, idx)
+				}
+			}
+		} else if strings.HasPrefix(key, "LTC_hash_") {
+			if suffix := strings.TrimPrefix(key, "LTC_hash_"); suffix != "" {
+				if idx, err := strconv.Atoi(suffix); err == nil {
+					remainingLTC = append(remainingLTC, idx)
+				}
+			}
+		}
+	}
+	
+	sort.Ints(remainingBTC)
+	sort.Ints(remainingLTC)
+	
+	log.Printf("TEST_UNIT: Remaining BTC indices: %v", remainingBTC)
+	log.Printf("TEST_UNIT: Remaining LTC indices: %v", remainingLTC)
+	
+	// BTC should have indices 2,3,4 (oldest 0,1 removed)
+	if !equalIntSlices(remainingBTC, []int{2, 3, 4}) {
+		t.Fatalf("BTC should retain newest 3 entries, got %v", remainingBTC)
+	}
+	
+	// LTC should have indices 1,2,3 (oldest 0 removed) 
+	if !equalIntSlices(remainingLTC, []int{1, 2, 3}) {
+		t.Fatalf("LTC should retain newest 3 entries, got %v", remainingLTC)
+	}
+}
+
+func TestServersBlockCacheManagement_EmptyCache(t *testing.T) {
+	defer recordTestResult("TestServersBlockCacheManagement_EmptyCache", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_EmptyCache")
+	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_EmptyCache")
+
+	// Test with empty cache
+	blockCache = make(map[string]*BlockCache)
+	initialSize := len(blockCache)
+	assert.Equal(t, 0, initialSize, "Cache should start empty")
+	
 	purgeCache(blockCache, 5)
-	cacheSize := len(blockCache)
-	log.Printf("TEST_UNIT: Cache size after purge: %d", cacheSize)
-	assert.Equal(t, 5, cacheSize, "Cache should be purged from 15 to 5 entries")
+	finalSize := len(blockCache)
+	assert.Equal(t, 0, finalSize, "Empty cache should remain empty after purge")
+}
 
-	// Verify that the blockhash count is now 5
-	blockHashCount := 0
-	for _, bc := range blockCache {
-		if bc.BlockHash == blockHash {
-			blockHashCount++
+func TestServersBlockCacheManagement_ExactlyAtLimit(t *testing.T) {
+	defer recordTestResult("TestServersBlockCacheManagement_ExactlyAtLimit", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_ExactlyAtLimit")
+	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_ExactlyAtLimit")
+
+	blockCache = make(map[string]*BlockCache)
+	
+	// Add exactly maxStoredBlocks entries for BTC
+	maxStoredBlocks := 3
+	for i := 0; i < maxStoredBlocks; i++ {
+		key := fmt.Sprintf("BTC_hash_%d", i)
+		blockCache[key] = &BlockCache{
+			BlockHash: "btc_hash_" + strconv.Itoa(i),
+			timeDiff:  float64(i),
+			cachedAt:  time.Now().Add(time.Duration(-i) * time.Minute), // Earlier entries are older
 		}
 	}
-	assert.Equal(t, 5, blockHashCount, "Blockhash should have exactly 5 entries after purge")
+	
+	initialSize := len(blockCache)
+	assert.Equal(t, maxStoredBlocks, initialSize, "Should start with exactly limit entries")
+	
+	purgeCache(blockCache, maxStoredBlocks)
+	finalSize := len(blockCache)
+	assert.Equal(t, maxStoredBlocks, finalSize, "Cache at limit should remain unchanged")
+}
+
+func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
+	defer recordTestResult("TestServersBlockCacheManagement_SingleCoin", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_SingleCoin")
+	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_SingleCoin")
+
+	blockCache = make(map[string]*BlockCache)
+	
+	// Test with single coin having many entries
+	maxStoredBlocks := 2
+	totalEntries := 10
+	
+	// Create entries with different cachedAt times
+	// Entry 0 should be oldest, entry 9 should be newest
+	for i := 0; i < totalEntries; i++ {
+		key := fmt.Sprintf("BTC_hash_%d", i)
+		blockCache[key] = &BlockCache{
+			BlockHash: "btc_hash_" + strconv.Itoa(i),
+			timeDiff:  float64(i),
+			cachedAt:  time.Now().Add(time.Duration(-10+i) * time.Minute), // Earlier entries are older
+		}
+	}
+	
+	initialSize := len(blockCache)
+	assert.Equal(t, totalEntries, initialSize, "Should start with %d entries", totalEntries)
+	
+	purgeCache(blockCache, maxStoredBlocks)
+	finalSize := len(blockCache)
+	assert.Equal(t, maxStoredBlocks, finalSize, "Should be reduced to limit")
+	
+	// Verify only newest entries remain
+	remainingIndices := make([]int, 0)
+	for key := range blockCache {
+		if suffix := strings.TrimPrefix(key, "BTC_hash_"); suffix != "" {
+			if idx, err := strconv.Atoi(suffix); err == nil {
+				remainingIndices = append(remainingIndices, idx)
+			}
+		}
+	}
+	
+	sort.Ints(remainingIndices)
+	expectedRemaining := []int{8, 9} // indices 8 and 9 (0-based), the newest 2
+	if !equalIntSlices(remainingIndices, expectedRemaining) {
+		t.Fatalf("Should retain newest 2 entries, got %v", remainingIndices)
+	}
+}
+
+// Helper function to compare integer slices
+func equalIntSlices(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

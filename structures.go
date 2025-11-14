@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/valyala/fastjson"
+	"time"
 )
 
 type Coin struct {
@@ -37,7 +38,8 @@ type Servers struct {
 
 type BlockCache struct {
 	BlockHash string
-	timeDiff  float64 // diff between block time and actual desktop time
+	timeDiff  float64    // diff between block time and actual desktop time
+	cachedAt  time.Time  // when this entry was cached
 }
 
 type RequestData struct {
