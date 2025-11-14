@@ -7,11 +7,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
+	"time"
 
 	"github.com/valyala/fastjson"
 )
+
+// initHTTPClient initializes the HTTP client with configuration values
+func initHTTPClient() {
+	httpClient = &http.Client{
+		Timeout: time.Duration(config.HttpTimeout) * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			IdleConnTimeout:     time.Duration(config.HttpTimeout) * time.Second,
+			DisableCompression:  false,
+			MaxIdleConnsPerHost: 10,
+			MaxConnsPerHost:     100,
+		},
+	}
+}
 
 func getDefaultJSONResponse() *fastjson.Value {
 	return fastjson.MustParse(`{"result": null, "error": null}`)
@@ -49,53 +63,6 @@ func ParseToFastjson(data interface{}) (*fastjson.Value, error) {
 		return nil, err
 	}
 	return parseJSON(jsonBytes)
-}
-
-// Fixed purgeCache function - groups by coin from cache key and removes oldest chronological entries
-func purgeCache(blockCache map[string]*BlockCache, maxStoredBlocks int) {
-	// Group cache entries by coin (from key format "coin_hash")
-	coinEntries := make(map[string][]string)
-	for key := range blockCache {
-		parts := strings.SplitN(key, "_", 2) // Split into coin and hash
-		if len(parts) >= 1 {
-			coin := parts[0]
-			coinEntries[coin] = append(coinEntries[coin], key)
-		}
-	}
-
-	totalRemoved := 0
-	coinsPurged := 0
-
-	// Remove excess entries per coin
-	for _, keys := range coinEntries {
-		if len(keys) > maxStoredBlocks {
-			coinsPurged++
-			toRemove := len(keys) - maxStoredBlocks
-			totalRemoved += toRemove
-
-			// logger.Printf("[CACHE] Coin %s has %d entries, removing %d oldest (keeping %d most recent)", coin, len(keys), toRemove, maxStoredBlocks)
-
-			// Sort keys by cachedAt time to identify oldest entries (earliest cachedAt = oldest)
-			sort.Slice(keys, func(i, j int) bool {
-				return blockCache[keys[i]].cachedAt.Before(blockCache[keys[j]].cachedAt)
-			})
-
-			// Remove oldest entries
-			entriesToDelete := keys[:toRemove]
-			for _, key := range entriesToDelete {
-				// logger.Printf("[CACHE] Removing %s entry: %s (cached at: %v)",
-				// 	coin, key, blockCache[key].cachedAt)
-				delete(blockCache, key)
-			}
-		}
-	}
-
-	// Only log if we actually removed entries
-	// if totalRemoved > 0 {
-	// 	finalCount := len(blockCache)
-	// 	logger.Printf("[CACHE] Purge completed - removed %d entries from %d coins, %d total entries remaining",
-	// 		totalRemoved, coinsPurged, finalCount)
-	// }
 }
 
 func decompressGzip(input io.Reader) ([]byte, error) {

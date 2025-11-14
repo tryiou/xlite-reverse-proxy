@@ -3,14 +3,17 @@ package main
 import (
 	"flag"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 )
 
 var mu sync.Mutex
-var blockCache = make(map[string]*BlockCache)
 
 var config *Config
+
+// Global HTTP client with connection pooling
+var httpClient *http.Client
 
 func startGoroutines(servers *Servers, rp_port int) {
 	var wg sync.WaitGroup
@@ -25,10 +28,12 @@ func startGoroutines(servers *Servers, rp_port int) {
 
 func (servers *Servers) timer_UpdateAllServersData(wg *sync.WaitGroup) {
 	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop() // Stop the ticker when the function returns
+	defer ticker.Stop()
 
 	for range ticker.C {
-		servers.UpdateAllServersData(wg)
+		var wgUpdate sync.WaitGroup
+		servers.UpdateAllServersData(&wgUpdate)
+		wgUpdate.Wait()
 	}
 }
 
@@ -39,7 +44,6 @@ func init() {
 func main() {
 	defer logFile.Close()
 
-	// Define a command-line flag for the launch argument
 	dynlist := flag.Bool("dynlist", false, "Set to true to use dynamic server list & update routine")
 	configFile := flag.String("config", "xlite-reverse-proxy-config.yaml", "Path to the configuration file")
 	flag.Parse()
@@ -49,6 +53,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error loading configuration: %v", err)
 	}
+
+	// Initialize HTTP client with config values
+	initHTTPClient()
+
+	// Initialize optimized block cache with config value after config is loaded
+	optimizedBlockCache = NewOptimizedBlockCache(config.MaxStoredBlocks)
 
 	// Create a new instance of Servers
 	servers := Servers{

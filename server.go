@@ -40,7 +40,7 @@ func (s *Server) setDefaultResponses() {
 func (s *Server) server_GetPing() error {
 	payloadMethod := "ping"
 	payloadParams := []interface{}{}
-	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.setDefaultResponses()
 		return fmt.Errorf("failed to make HTTP request: %w", err)
@@ -68,7 +68,7 @@ func (s *Server) server_GetPing() error {
 func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value, error) {
 	payloadMethod := "getblock"
 	payloadParams := []interface{}{coin, blockHash, "true"}
-	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make HTTP request: %w", err)
 	}
@@ -97,7 +97,7 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 		logger.Printf("*error server_GetBlockHash called with height = -1, server:%d,%s,%d", s.id, coin, height)
 		return "", nil
 	}
-	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		return "", fmt.Errorf("failed to make HTTP request: %w", err)
 	}
@@ -116,7 +116,7 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 func (s *Server) server_GetFees() error {
 	payloadMethod := "fees"
 	payloadParams := []interface{}{}
-	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
 		return fmt.Errorf("failed to make HTTP request: %w", err)
@@ -133,7 +133,7 @@ func (s *Server) server_GetFees() error {
 func (s *Server) server_GetHeights() error {
 	payloadMethod := "heights"
 	payloadParams := []interface{}{}
-	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, config.HttpTimeout)
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
 		return fmt.Errorf("failed to make HTTP request: %w", err)
@@ -167,7 +167,7 @@ func (s *Server) sortGetHeightsKeys() {
 	}
 }
 
-func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams []interface{}, timeout int) ([]byte, error) {
+func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams []interface{}) ([]byte, error) {
 	var (
 		url     string
 		payload string
@@ -198,15 +198,7 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 		payload = string(payloadBytes)
 	}
 
-	//timeout
-	timeoutDuration := time.Duration(timeout) * time.Second
-	http.DefaultClient.Timeout = timeoutDuration
-
-	client := &http.Client{
-		Timeout: timeoutDuration,
-	}
 	reqTimer := time.Now()
-	//elapsedTimer := time.Since(startTimer)
 	req, err := http.NewRequest(httpMethod, url, strings.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w, %v", err, time.Since(reqTimer))
@@ -214,7 +206,7 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := client.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send HTTP request: %w, %v", err, time.Since(reqTimer))
 	}

@@ -504,13 +504,16 @@ type BlockCacheService struct{}
 // GetOrFetch retrieves a block cache entry by coin+hash, fetching it if needed
 func (s *BlockCacheService) GetOrFetch(server *Server, coin, hash string, height int) (*BlockCache, bool, error) {
 	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)
-	if existing, exists := blockCache[blockCacheKey]; exists {
+	
+	// Use optimized cache
+	if existing, exists := optimizedBlockCache.Get(blockCacheKey); exists {
 		return existing, true, nil
 	}
 	blockData, err := s.FetchAndCacheBlock(server, coin, hash, height)
 	if err != nil {
 		return nil, false, err
 	}
+	optimizedBlockCache.Add(blockCacheKey, blockData)
 	return blockData, false, nil
 }
 
@@ -535,12 +538,6 @@ func (s *BlockCacheService) FetchAndCacheBlock(server *Server, coin, hash string
 		timeDiff:  desktopTime.Sub(blockTime).Seconds(),
 		cachedAt:  desktopTime, // Track when this was cached
 	}
-
-	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)
-	blockCache[blockCacheKey] = newBlockData
-
-	// Purge cache after adding a new block to keep it under control
-	purgeCache(blockCache, config.MaxStoredBlocks)
 
 	return newBlockData, nil
 }
@@ -691,7 +688,7 @@ func FindServersFailingHashConsensus(servers *Servers) map[string][]int {
 
 			// A server fails consensus if the consensus hash is not present in its
 			// hash storage for the given coin. Note that this checks against all hashes
-			// stored for the coin on that server, not just the hash at the consensus height.
+			// stored for that coin on that server, not just the hash at the consensus height.
 			// This is the original, intended behavior.
 			if !isHashPresentInCoinStorage(server.hashesStorage[coin], consensusHash) {
 				failingServers[coin] = append(failingServers[coin], server.id)
@@ -717,7 +714,9 @@ func isHashPresentInCoinStorage(storage map[int]string, hashToFind string) bool 
 // reported by all servers. A fee is considered consensus if it's reported by a
 // sufficient ratio of servers (defined by `config.ConsensusThreshold`).
 func buildJSONValue(consensusData map[string]interface{}) *fastjson.Value {
-	arena := fastjson.Arena{}
+	arena := globalPool.GetArena()
+	defer globalPool.PutArena(arena)
+
 	result := arena.NewObject()
 	errNull := arena.NewNull()
 
@@ -748,7 +747,8 @@ func buildJSONValue(consensusData map[string]interface{}) *fastjson.Value {
 }
 
 func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
-	consensusData := make(map[string]interface{})
+	consensusData := globalPool.GetMap()
+	defer globalPool.PutMap(consensusData)
 
 	for _, elementCounts := range counts {
 		totalServers := 0
@@ -776,7 +776,8 @@ func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 // createGlobalHeightsJSON creates a `fastjson.Value` object representing the global
 // consensus on block heights for all coins. The keys are sorted alphabetically.
 func createGlobalHeightsJSON(mostCommonHeightsRanges map[string][]int) (*fastjson.Value, error) {
-	consensusData := make(map[string]interface{})
+	consensusData := globalPool.GetMap()
+	defer globalPool.PutMap(consensusData)
 
 	for coin, heights := range mostCommonHeightsRanges {
 		minHeight := heights[0]

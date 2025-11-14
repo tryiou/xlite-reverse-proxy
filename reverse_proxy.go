@@ -309,11 +309,12 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 		}
 	}
 
-	if req.Method == http.MethodGet {
+	switch req.Method {
+	case http.MethodGet:
 		method := req.URL.Path[1:]
 		params := []interface{}{}
 		return RequestData{Method: method, Params: params, Ip: ip}, nil
-	} else if req.Method == http.MethodPost {
+	case http.MethodPost:
 		err := json.NewDecoder(rdr).Decode(&requestData)
 		if err != nil {
 			logError("JSON decode", "failed to parse request JSON", err)
