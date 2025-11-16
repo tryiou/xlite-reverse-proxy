@@ -27,7 +27,7 @@ func startGoroutines(servers *Servers, rp_port int) {
 }
 
 func (servers *Servers) timer_UpdateAllServersData(wg *sync.WaitGroup) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(UpdateIntervalDefault)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -75,7 +75,7 @@ func main() {
 		UpdateServersFromJSON(&servers)
 	}
 
-	go startGoroutines(&servers, 11111)
+	go startGoroutines(&servers, DefaultPort)
 
 	// Keep the main goroutine running
 	select {}

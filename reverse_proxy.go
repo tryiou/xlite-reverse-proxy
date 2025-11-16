@@ -23,18 +23,18 @@ import (
 
 // Helper functions for standardized error responses
 func makeServiceUnavailableResponse() *fastjson.Value {
-	return fastjson.MustParse(`{"result": null, "error": "Service unavailable"}`)
+	return fastjson.MustParse(JSONResponseServiceUnavailable)
 }
 
 func makeErrorResponse(message string, details ...string) *fastjson.Value {
 	if len(details) > 0 {
-		return fastjson.MustParse(fmt.Sprintf(`{"result": null, "error": "%s", "details": "%s"}`, message, details[0]))
+		return fastjson.MustParse(fmt.Sprintf(JSONResponseServerErrorWithDetailsTemplate, message, details[0]))
 	}
-	return fastjson.MustParse(fmt.Sprintf(`{"result": null, "error": "%s"}`, message))
+	return fastjson.MustParse(fmt.Sprintf(JSONResponseServerErrorTemplate, message))
 }
 
 func logError(operation, message string, err error) {
-	logger.Printf("*error %s: %v", operation, err)
+	logger.Printf(LogPrefixError+" %s: %v", operation, err)
 }
 
 func writeErrorResponse(w http.ResponseWriter, status int, message string, details ...string) {
@@ -45,7 +45,7 @@ func writeErrorResponse(w http.ResponseWriter, status int, message string, detai
 
 func logCachedRequest(ip, endpoint string, start time.Time) {
 	elapsed := time.Since(start)
-	logger.Printf("[revProxy_Serv] %s request %s relayed OK from cache, exec_timer:%s\n", ip, endpoint, elapsed)
+	logger.Printf(LogPrefixRevProxy+" %s request %s relayed OK from cache, "+LogExecTimerFormat+"\n", ip, endpoint, elapsed)
 }
 
 func writeResponseChecked(w http.ResponseWriter, resp *fastjson.Value) error {
@@ -61,14 +61,14 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		requestData, err := extractRequestData(req)
 		if err != nil {
-			logError("extractRequestData", "failed to extract request data", err)
-			writeErrorResponse(rw, http.StatusBadRequest, "Failed to extract request data")
+			logError("extractRequestData", ErrorMessageFailedExtractRequestData, err)
+			writeErrorResponse(rw, HTTPStatusBadRequest, ErrorMessageFailedExtractRequestData)
 			return
 		}
 
 		// Check if the request path is in the acceptedPaths list
 		if !isPathAccepted(req.URL.Path) {
-			logError("isPathAccepted", "invalid path", fmt.Errorf("%s not in accepted paths", req.URL.Path))
+			logError("isPathAccepted", ErrorMessageInvalidPath, fmt.Errorf("%s not in accepted paths", req.URL.Path))
 			http.NotFound(rw, req)
 			return
 		}
@@ -101,17 +101,17 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 			return
 
 		case req.URL.Path == "/ping" || requestData.Method == "ping":
-			response := fastjson.MustParse("1")
+			response := fastjson.MustParse(JSONResponsePingSuccess)
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
 			elapsedTimer := time.Since(startTimer)
-			logger.Printf("[revProxy_Serv] %s request ping relayed OK, exec_timer:%s\n", requestData.Ip, elapsedTimer)
+			logger.Printf(LogPrefixRevProxy+" %s request ping relayed OK, "+LogExecTimerFormat+"\n", requestData.Ip, elapsedTimer)
 			return
 
 		default:
 			if !isMethodAccepted(requestData.Method) {
-				logError("isMethodAccepted", "invalid method", fmt.Errorf("%s not in accepted methods", requestData.Method))
+				logError("isMethodAccepted", ErrorMessageInvalidMethod, fmt.Errorf("%s not in accepted methods", requestData.Method))
 				http.NotFound(rw, req)
 				return
 			}
@@ -123,10 +123,10 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 				return
 			}
 
-			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, 3)
+			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, RetryAttemptsDefault)
 			if err != nil {
 				logError("retryWithRandomValidServer", "no valid server available", err)
-				writeErrorResponse(rw, http.StatusServiceUnavailable, "No valid server for "+coin)
+				writeErrorResponse(rw, HTTPStatusServiceUnavailable, ErrorMessageNoValidServerForCoin+coin)
 				return
 			}
 
@@ -157,16 +157,16 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		randomValidServerID, err := servers.GetRandomValidServerID(coin)
 		if err != nil {
 			logError("getRandomValidServer", "failed to get random valid server", err)
-			writeErrorResponse(rw, http.StatusServiceUnavailable, "No valid server available")
+			writeErrorResponse(rw, HTTPStatusServiceUnavailable, ErrorMessageNoValidServerAvailable)
 			return nil, err
 		}
 
 		server, exists := servers.GetServerByID(randomValidServerID)
 		if !exists {
-			logError("GetServerByID", "server not found", fmt.Errorf("server ID %d not found", randomValidServerID))
+			logError("GetServerByID", "server not found", fmt.Errorf(ErrorMessageServerIDNotFound, randomValidServerID))
 			sanitizedResponse := makeServiceUnavailableResponse()
 			_ = WriteJSONResponse(rw, sanitizedResponse)
-			return nil, fmt.Errorf("server not found")
+			return nil, fmt.Errorf(ErrorMessageServerNotFound)
 		}
 
 		err = updateRequestHeaders(req, &server, *requestData)
@@ -188,7 +188,7 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		}
 	}
 
-	logger.Println("All retries exhausted. Unable to process the request.")
+	logger.Println(ErrorMessageAllRetriesExhausted)
 	sanitizedResponse := makeServiceUnavailableResponse()
 	_ = WriteJSONResponse(rw, sanitizedResponse)
 	return nil, fmt.Errorf("all retries exhausted")
@@ -212,7 +212,7 @@ func updateRequestHeaders(req *http.Request, server *Server, requestData Request
 	req.URL.Host = originServerURL.Host
 	req.URL.Scheme = originServerURL.Scheme
 	req.RequestURI = ""
-	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set(HeaderAcceptEncoding, ContentEncodingGzip)
 
 	if req.Body != nil {
 		body, err := io.ReadAll(req.Body)
@@ -253,22 +253,22 @@ func handleOriginServerResponse(rw http.ResponseWriter, req *http.Request, serve
 
 func extractCoin(requestData RequestData) (string, error) {
 	if len(requestData.Params) == 0 {
-		return "", errors.New("missing coin parameter")
+		return "", errors.New(ErrorMessageMissingCoinParam)
 	}
 	coin, ok := requestData.Params[0].(string)
 	if !ok {
-		return "", errors.New("invalid coin type")
+		return "", errors.New(ErrorMessageInvalidCoinType)
 	}
 	return coin, nil
 }
 
 // decompressResponseBody decompresses the response body based on the content encoding.
 func decompressResponseBody(response *http.Response) ([]byte, error) {
-	contentEncoding := response.Header.Get("Content-Encoding")
+	contentEncoding := response.Header.Get(HeaderContentEncoding)
 	switch contentEncoding {
-	case "gzip":
+	case ContentEncodingGzip:
 		return decompressGzip(response.Body)
-	case "deflate":
+	case ContentEncodingDeflate:
 		return decompressDeflate(response.Body)
 	case "":
 		return io.ReadAll(response.Body)
@@ -285,7 +285,7 @@ func extractRequestData(req *http.Request) (RequestData, error) {
 	requestData, err := extractMethodParamsIp(rdr1, req)
 
 	if err != nil {
-		return RequestData{Method: "null", Params: nil, Ip: "null"}, err
+		return RequestData{Method: JSONNullValue, Params: nil, Ip: JSONNullValue}, err
 	}
 	req.Body = rdr2
 	return requestData, nil
@@ -297,7 +297,7 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 	var ip string
 	var err error
 
-	reqClientIP := req.Header.Get("X-Forwarded-For")
+	reqClientIP := req.Header.Get(HeaderXForwardedFor)
 	if reqClientIP != "" {
 		ips := strings.Split(reqClientIP, ",")
 		ip = strings.TrimSpace(ips[0])
@@ -305,7 +305,7 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 		ip, _, err = net.SplitHostPort(req.RemoteAddr)
 		if err != nil {
 			logError("extractClientIP", "failed to extract client IP", err)
-			return RequestData{Method: "null", Params: nil, Ip: ""}, err
+			return RequestData{Method: JSONNullValue, Params: nil, Ip: ""}, err
 		}
 	}
 
@@ -318,7 +318,7 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 		err := json.NewDecoder(rdr).Decode(&requestData)
 		if err != nil {
 			logError("JSON decode", "failed to parse request JSON", err)
-			return RequestData{}, fmt.Errorf("invalid JSON format: %w", err)
+			return RequestData{}, fmt.Errorf(ErrorMessageFailedParseJSON+": %w", err)
 		}
 		requestData.Ip = ip
 		return requestData, nil
@@ -353,8 +353,8 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("*error unexpected server response status: %s", resp.Status)
+	if resp.StatusCode != HTTPStatusOK {
+		return nil, fmt.Errorf(ErrorMessageUnexpectedServerResponse, resp.Status)
 	}
 
 	return resp, nil
@@ -392,7 +392,7 @@ func logRequest(server Server, requestData *RequestData, reqURL *url.URL, startT
 		bufParams = "[]"
 	}
 	elapsedTimer := time.Since(startTimer)
-	logger.Printf("[revProxy_Serv] %s request %s %s relayed OK to server[%d], exec_timer:%s\n", requestData.Ip, requestData.Method, bufParams, server.id, elapsedTimer)
+	logger.Printf(LogPrefixRevProxy+" %s request %s %s relayed OK to server[%d], "+LogExecTimerFormat+"\n", requestData.Ip, requestData.Method, bufParams, server.id, elapsedTimer)
 }
 
 // isPathAccepted checks if the request path is in the acceptedPaths list.

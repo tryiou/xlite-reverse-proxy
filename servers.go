@@ -126,16 +126,16 @@ func (servers *Servers) UpdateGlobalFees() {
 func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *Coin) (blockHash string, timeDiff float64, cached bool) {
 	getBlockHash, err := s.server_GetBlockHash(coinStr, heightInt)
 	if err != nil {
-		logger.Printf("[server%2d] Failed to get block hash for %s at height %d: %v", s.id, coinStr, heightInt, err)
+		logger.Printf(LogPrefixServer+"_Failed to get block hash for %s at height %d: %v", s.id, coinStr, heightInt, err)
 		coinMap.getBlockHash = ""
-		coinMap.timeDiff = -1000
+		coinMap.timeDiff = InvalidTimeDiffValue
 		return "", 0, false
 	}
 
 	if getBlockHash == "" {
-		logger.Printf("[server%2d] Empty block hash for %s at height %d", s.id, coinStr, heightInt)
+		logger.Printf(LogPrefixServer+"_Empty block hash for %s at height %d", s.id, coinStr, heightInt)
 		coinMap.getBlockHash = ""
-		coinMap.timeDiff = -1000
+		coinMap.timeDiff = InvalidTimeDiffValue
 		return "", 0, false
 	}
 
@@ -145,7 +145,7 @@ func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *
 	if err != nil {
 		logger.Printf("[server%2d] Couldn't fetch block data for %s: %s: %v", s.id, coinStr, getBlockHash, err)
 		coinMap.getBlockHash = ""
-		coinMap.timeDiff = -1000
+		coinMap.timeDiff = InvalidTimeDiffValue
 		return "", 0, false
 	}
 
@@ -155,14 +155,14 @@ func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *
 	if blockData.timeDiff < float64(config.MaxBlockTimeDiff) {
 		coinMap.timeDiff = blockData.timeDiff
 	} else {
-		coinMap.timeDiff = -1000
+		coinMap.timeDiff = InvalidTimeDiffValue
 		valid = false
 	}
 
 	if valid {
 		return blockData.BlockHash, blockData.timeDiff, cached
 	}
-	return blockData.BlockHash, -1000, cached
+	return blockData.BlockHash, InvalidTimeDiffValue, cached
 }
 
 // updateCoinData updates the coin map for a single server.
@@ -177,7 +177,7 @@ func (s *Server) updateCoinData() error {
 
 	obj, err := heightsObj.Object()
 	if err != nil {
-		logger.Printf("[server%2d]_updateCoinData, error with heights object: %v", s.id, err)
+		logger.Printf(LogPrefixServerHeights+", error with heights object: %v", s.id, err)
 		s.coinsMap = make(map[string]Coin)
 		return err
 	}
@@ -185,12 +185,12 @@ func (s *Server) updateCoinData() error {
 	obj.Visit(func(coin []byte, height *fastjson.Value) {
 		coinStr := string(coin)
 		heightInt := -1
-		if height.String() != "null" {
+		if height.String() != JSONNullString {
 			var err error
 			heightInt, err = height.Int()
 			if err != nil {
 				logger.Printf("updateCoinData: error parsing height for coin %s: %v", coinStr, err)
-				heightInt = -1
+				heightInt = InvalidHeightValue
 			}
 		}
 
@@ -212,7 +212,7 @@ func (s *Server) updateCoinData() error {
 				}
 			} else {
 				coinMap.getBlockHash = ""
-				coinMap.timeDiff = -1000
+				coinMap.timeDiff = InvalidTimeDiffValue
 			}
 			s.coinsMap[coinStr] = coinMap
 		}
@@ -247,7 +247,7 @@ func (s *Server) updateCoinData() error {
 func (servers *Servers) updateCoinDataForAllServers() {
 	for _, server := range servers.Slice {
 		if err := server.updateCoinData(); err != nil {
-			logger.Printf("[server%2d] failed to update coin data: %v", server.id, err)
+			logger.Printf(LogPrefixServerError+" failed to update coin data: %v", server.id, err)
 		}
 	}
 }
@@ -277,7 +277,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 5. Create the JSON response for servers in consensus.
 	commonHeightServersJSON, err := createCommonHeightServersJSON(commonHeightServers)
 	if err != nil {
-		logger.Printf(" error creating JSON for common height servers: %v", err)
+		logger.Printf(LogPrefixError+" creating JSON for common height servers: %v", err)
 		servers.GlobalHeights = getDefaultJSONResponse()
 		servers.GlobalCoinServerIDs = getEmptyJSONResponse()
 		return
@@ -286,7 +286,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 6. Create the global heights JSON response.
 	globalHeightsJSON, err := createGlobalHeightsJSON(mostCommonHeightsRanges)
 	if err != nil {
-		logger.Printf(" error creating JSON for GGet heights: %v", err)
+		logger.Printf(LogPrefixError+" creating JSON for GGet heights: %v", err)
 		servers.GlobalHeights = getDefaultJSONResponse()
 		servers.GlobalCoinServerIDs = getEmptyJSONResponse()
 		return
@@ -393,7 +393,7 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 				// Delete the non-consensus coin(s) from each affected server's coinMap.
 				for _, serverID := range serverIDs {
 					if server, exists := servers.GetServerByID(serverID); exists {
-						logger.Printf("[server%2d] Removing %s from coinMap\n", server.id, coin)
+						logger.Printf(LogPrefixServerError+" Removing %s from coinMap\n", server.id, coin)
 						delete(server.coinsMap, coin)
 					}
 				}
@@ -407,12 +407,12 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	coinObj := servers.GlobalCoinServerIDs.GetObject(coin)
 	if coinObj == nil {
-		errMsg := fmt.Sprintf("Coin '%s' not found", coin)
+		errMsg := fmt.Sprintf(ErrorMessageCoinNotFound, coin)
 		return -1, errors.New(errMsg)
 	}
 	coinArrayValue := coinObj.Get("ids")
 	if coinArrayValue == nil {
-		errMsg := fmt.Sprintf("Server IDs array not found for coin '%s'", coin)
+		errMsg := fmt.Sprintf(ErrorMessageServerIDsArrayNotFound, coin)
 		return -1, errors.New(errMsg)
 	}
 	coinArray, err := coinArrayValue.Array()
@@ -422,7 +422,7 @@ func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	// Get the length of the coinArray
 	coinArrayLen := len(coinArray)
 	if coinArrayLen < 1 {
-		errMsg := fmt.Sprintf("No server for %s: %d", coin, coinArrayLen)
+		errMsg := fmt.Sprintf(ErrorMessageNoServerForCoin, coin, coinArrayLen)
 		return -1, errors.New(errMsg)
 	}
 
@@ -453,20 +453,20 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 
 			err := server.server_GetPing()
 			if err != nil {
-				logger.Printf("[server%2d]_error   : %v", server.id, err)
+				logger.Printf(LogPrefixServerError+"   : %v", server.id, err)
 			}
 			if server.ping == 1 {
 				startTimer := time.Now()
 				err := server.server_GetHeights()
 				elapsedTimer := time.Since(startTimer)
 				if err != nil {
-					logger.Printf("[server%2d]_error getting heights: %v", server.id, err)
+					logger.Printf(LogPrefixServerError+" getting heights: %v", server.id, err)
 				}
 				err = server.server_GetFees()
 				if err != nil {
-					logger.Printf("[server%2d]_error getting fees: %v", server.id, err)
+					logger.Printf(LogPrefixServerError+" getting fees: %v", server.id, err)
 				}
-				logger.Printf("[server%2d]_Heights : %v %v", server.id, server.getheights, elapsedTimer)
+				logger.Printf(LogPrefixServerHeights+" : %v %v", server.id, server.getheights, elapsedTimer)
 			}
 		}(i)
 	}
@@ -490,7 +490,7 @@ func buildCoinHeightsMap(servers *Servers) (map[string][]int, error) {
 	for _, server := range servers.Slice {
 		for coin, coinObj := range server.coinsMap {
 			// Only include data from healthy coins (valid height and acceptable time diff).
-			if coinObj.getBlockCount > 0 && coinObj.timeDiff != -1000 {
+			if coinObj.getBlockCount > 0 && coinObj.timeDiff != InvalidTimeDiffValue {
 				heightsMap[coin] = append(heightsMap[coin], coinObj.getBlockCount)
 			}
 		}
@@ -504,7 +504,7 @@ type BlockCacheService struct{}
 // GetOrFetch retrieves a block cache entry by coin+hash, fetching it if needed
 func (s *BlockCacheService) GetOrFetch(server *Server, coin, hash string, height int) (*BlockCache, bool, error) {
 	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)
-	
+
 	// Use optimized cache
 	if existing, exists := optimizedBlockCache.Get(blockCacheKey); exists {
 		return existing, true, nil
@@ -857,8 +857,8 @@ func computeMostCommonHeightRanges(heightsMap map[string][]int) map[string][]int
 		var mostCommonCount int
 		for _, height := range heights {
 			// Define a tolerance range around the current height.
-			rangeStart := height - 5
-			rangeEnd := height + 5
+			rangeStart := height - BlockHashToleranceRange
+			rangeEnd := height + BlockHashToleranceRange
 			rangeCount := countRangeValues(counts, rangeStart, rangeEnd)
 			if rangeCount > mostCommonCount || (rangeCount == mostCommonCount && height > mostCommonRange[len(mostCommonRange)-1]) {
 				mostCommonRange = getValuesInRange(heights, rangeStart, rangeEnd)

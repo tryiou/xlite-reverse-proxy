@@ -12,11 +12,9 @@ import (
 	"github.com/valyala/fastjson"
 )
 
-const maxLen = 4
-
 func (s *Server) pruneHashStorage() {
 	for _, storage := range s.hashesStorage {
-		if len(storage) <= maxLen {
+		if len(storage) <= MaxHashStorageLength {
 			continue
 		}
 		heights := make([]int, 0, len(storage))
@@ -24,7 +22,7 @@ func (s *Server) pruneHashStorage() {
 			heights = append(heights, height)
 		}
 		sort.Sort(sort.Reverse(sort.IntSlice(heights)))
-		for i := maxLen; i < len(heights); i++ {
+		for i := MaxHashStorageLength; i < len(heights); i++ {
 			delete(storage, heights[i])
 		}
 	}
@@ -57,10 +55,10 @@ func (s *Server) server_GetPing() error {
 		return fmt.Errorf("failed to retrieve the 'result' element")
 	}
 
-	if result.Type() == fastjson.TypeNumber && result.GetInt() == 1 {
-		s.ping = 1
+	if result.Type() == fastjson.TypeNumber && result.GetInt() == PingSuccessValue {
+		s.ping = PingSuccessValue
 	} else {
-		s.ping = 0
+		s.ping = PingFailureValue
 	}
 	return nil
 }
@@ -93,8 +91,8 @@ func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value
 func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 	payloadMethod := "getblockhash"
 	payloadParams := []interface{}{coin, height}
-	if height == -1 {
-		logger.Printf("*error server_GetBlockHash called with height = -1, server:%d,%s,%d", s.id, coin, height)
+	if height == InvalidHeightValue {
+		logger.Printf(LogPrefixError+" server_GetBlockHash called with height = %d, server:%d,%s,%d", InvalidHeightValue, s.id, coin, height)
 		return "", nil
 	}
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
@@ -204,7 +202,7 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 		return nil, fmt.Errorf("failed to create HTTP request: %w, %v", err, time.Since(reqTimer))
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderContentType, ContentTypeJSON)
 
 	res, err := httpClient.Do(req)
 	if err != nil {

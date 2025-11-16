@@ -51,7 +51,7 @@ func cleanupVisitors() {
 
 		mu.Lock()
 		for ip, v := range visitors {
-			if time.Since(v.lastSeen) > 3*time.Minute {
+			if time.Since(v.lastSeen) > VisitorCleanupInterval {
 				delete(visitors, ip)
 			}
 		}
@@ -70,7 +70,7 @@ func limit(next http.Handler) http.Handler {
 		} else {
 			ip, _, err = net.SplitHostPort(r.RemoteAddr)
 			if err != nil {
-				logger.Printf("error extracting client ip from request: %v", err)
+				logger.Printf(LogPrefixError+"_error extracting client ip from request: %v", err)
 				return
 			}
 		}

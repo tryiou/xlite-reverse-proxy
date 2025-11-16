@@ -125,7 +125,7 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 		return nil, fmt.Errorf("failed to unmarshal initial response: %w", err)
 	}
 
-	if response.Error != nil && *response.Error != "null" {
+	if response.Error != nil && *response.Error != JSONNullString {
 		return nil, fmt.Errorf("remote provider returned an error: %s", *response.Error)
 	}
 
@@ -261,7 +261,7 @@ func startServerUpdateRoutine(servers *Servers) {
 	updateServersFromProviders(servers)
 
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(UpdateIntervalDynamic)
 		defer ticker.Stop()
 		for {
 			<-ticker.C

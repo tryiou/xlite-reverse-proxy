@@ -99,7 +99,7 @@ func createDefaultConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("failed to marshal default config: %w", err)
 	}
 
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
+	if err := os.WriteFile(configFile, data, FilePermissionRWXRWXR); err != nil {
 		return nil, fmt.Errorf("failed to write default config to file: %w", err)
 	}
 

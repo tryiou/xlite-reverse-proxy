@@ -18,21 +18,21 @@ func initHTTPClient() {
 	httpClient = &http.Client{
 		Timeout: time.Duration(config.HttpTimeout) * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
+			MaxIdleConns:        HTTPMaxIdleConns,
 			IdleConnTimeout:     time.Duration(config.HttpTimeout) * time.Second,
 			DisableCompression:  false,
-			MaxIdleConnsPerHost: 10,
-			MaxConnsPerHost:     100,
+			MaxIdleConnsPerHost: HTTPMaxIdleConnsPerHost,
+			MaxConnsPerHost:     HTTPMaxConnsPerHost,
 		},
 	}
 }
 
 func getDefaultJSONResponse() *fastjson.Value {
-	return fastjson.MustParse(`{"result": null, "error": null}`)
+	return fastjson.MustParse(JSONResponseDefault)
 }
 
 func getEmptyJSONResponse() *fastjson.Value {
-	return fastjson.MustParse(`{}`)
+	return fastjson.MustParse(JSONResponseEmpty)
 }
 
 func parseJSON(data []byte) (*fastjson.Value, error) {
@@ -40,9 +40,9 @@ func parseJSON(data []byte) (*fastjson.Value, error) {
 	value, err := p.ParseBytes(data)
 	if err != nil {
 		errorMsg := string(data)
-		if strings.Contains(errorMsg, "Internal Server Error") {
+		if strings.Contains(errorMsg, ErrorMessageInternalServerError) {
 			// Handle the error by producing valid JSON
-			return fastjson.Parse(`{"error": "Internal Server Error"}`)
+			return fastjson.Parse(JSONResponseInternalServerError)
 		}
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
@@ -51,7 +51,7 @@ func parseJSON(data []byte) (*fastjson.Value, error) {
 
 // WriteJSONResponse writes a JSON response with proper headers
 func WriteJSONResponse(w http.ResponseWriter, value *fastjson.Value) error {
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set(HeaderContentType, ContentTypeJSONCharset)
 	_, err := w.Write(value.MarshalTo(nil))
 	return err
 }
@@ -85,7 +85,7 @@ func decompressDeflate(input io.Reader) ([]byte, error) {
 func removeNonPrintableChars(s string) string {
 	var result []rune
 	for _, c := range s {
-		if c >= 32 && c <= 126 && c != '\\' && c != '"' && c != '\x00' {
+		if c >= CompressionThresholdMin && c <= CompressionThresholdMax && c != CompressionEscapeChar && c != CompressionQuoteChar && c != CompressionNullChar {
 			result = append(result, c)
 		}
 	}

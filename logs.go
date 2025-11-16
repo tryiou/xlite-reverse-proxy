@@ -15,7 +15,7 @@ var (
 
 func initLogger() {
 	var err error
-	logFile, err = os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err = os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, FilePermissionRWXRWXR)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func initLogger() {
 	go func() {
 		for {
 			// Sleep for the specified interval before checking the file size again
-			time.Sleep(5 * time.Minute)
+			time.Sleep(LogRotationInterval)
 
 			// Check if the log file exceeds the maximum size
 			fileInfo, err := logFile.Stat()
@@ -68,7 +68,7 @@ func rotateLogFile() error {
 		return err
 	}
 	// Create a new log file
-	logFile, err = os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err = os.OpenFile("logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, FilePermissionRWXRWXR)
 	if err != nil {
 		return err
 	}

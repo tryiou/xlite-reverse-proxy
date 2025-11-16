@@ -103,7 +103,7 @@ var globalPool = &ObjectPool{
 	},
 	slicePool: sync.Pool{
 		New: func() interface{} {
-			slice := make([]int, 0, 10)
+			slice := make([]int, 0, MaxHashStorageLength)
 			return &slice
 		},
 	},

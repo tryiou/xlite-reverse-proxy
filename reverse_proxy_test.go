@@ -122,7 +122,7 @@ func TestReverseProxy_BackendRetry(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			http.Error(w, "server error", http.StatusInternalServerError)
+			http.Error(w, ErrorMessageServerError, http.StatusInternalServerError)
 			return
 		}
 		fmt.Fprint(w, `{"result":"success"}`)
