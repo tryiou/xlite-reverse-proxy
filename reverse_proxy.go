@@ -45,7 +45,7 @@ func writeErrorResponse(w http.ResponseWriter, status int, message string, detai
 
 func logCachedRequest(ip, endpoint string, start time.Time) {
 	elapsed := time.Since(start)
-	logger.Printf(LogPrefixRevProxy+" %s request %s relayed OK from cache, "+LogExecTimerFormat+"\n", ip, endpoint, elapsed)
+	logger.Printf(LogPrefixRevProxy+" %s request %s relayed OK from cache, "+LogExecTimerFormat, ip, endpoint, elapsed)
 }
 
 func writeResponseChecked(w http.ResponseWriter, resp *fastjson.Value) error {
@@ -153,45 +153,66 @@ func reverseProxy(port int, servers *Servers) {
 
 // retryWithRandomValidServer selects a random valid server, sends the request, and handles the response.
 func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, servers *Servers, coin string, requestData *RequestData, maxRetries int) (*Server, error) {
+	var lastError error
+
 	for i := 0; i < maxRetries; i++ {
+		if i > 0 { // Only log for attempts after the first one
+			logger.Printf(LogPrefixRevProxy+" Attempt %d/%d for coin %s", i+1, maxRetries, coin)
+		}
+
 		randomValidServerID, err := servers.GetRandomValidServerID(coin)
 		if err != nil {
-			logError("getRandomValidServer", "failed to get random valid server", err)
-			writeErrorResponse(rw, HTTPStatusServiceUnavailable, ErrorMessageNoValidServerAvailable)
-			return nil, err
+			logError("getRandomValidServer", fmt.Sprintf("failed to get random valid server for coin %s (attempt %d/%d)", coin, i+1, maxRetries), err)
+			lastError = err
+			continue
 		}
 
 		server, exists := servers.GetServerByID(randomValidServerID)
 		if !exists {
-			logError("GetServerByID", "server not found", fmt.Errorf(ErrorMessageServerIDNotFound, randomValidServerID))
-			sanitizedResponse := makeServiceUnavailableResponse()
-			_ = WriteJSONResponse(rw, sanitizedResponse)
-			return nil, fmt.Errorf(ErrorMessageServerNotFound)
+			logError("GetServerByID", fmt.Sprintf("server %d not found for coin %s (attempt %d/%d)", randomValidServerID, coin, i+1, maxRetries), fmt.Errorf(ErrorMessageServerIDNotFound, randomValidServerID))
+			lastError = fmt.Errorf(ErrorMessageServerNotFound)
+			continue
 		}
 
 		err = updateRequestHeaders(req, &server, *requestData)
 		if err != nil {
-			logError("updateRequestHeaders", "failed to update request headers", err)
-			writeErrorResponse(rw, http.StatusServiceUnavailable, "Failed to update request headers")
-			return nil, err
+			logError("updateRequestHeaders", fmt.Sprintf("failed to update request headers for server %d (attempt %d/%d)", server.id, i+1, maxRetries), err)
+			lastError = err
+			continue
 		}
 
 		err = handleOriginServerResponse(rw, req, &server)
 		if err != nil {
 			if strings.Contains(err.Error(), "context canceled") {
+				logError("handleOriginServerResponse", "request context canceled", err)
 				return nil, err
 			}
+
+			// Log the specific error and remove server from rotation
+			logError("handleOriginServerResponse", fmt.Sprintf("server %d response failed for coin %s (attempt %d/%d)", server.id, coin, i+1, maxRetries), err)
 			servers.RemoveServerFromGlobalCoinList(coin, server.id)
-			logError("handleOriginServerResponse", "server response failed", err)
+			lastError = err
+
+			// Don't continue retrying if it's a client error (4xx)
+			if strings.Contains(err.Error(), "4") {
+				logger.Printf(LogPrefixRevProxy+" Client error detected, stopping retries: %v", err)
+				break
+			}
 		} else {
+			// logger.Printf(LogPrefixRevProxy+" Successfully processed request for coin %s using server %d", coin, server.id)
 			return &server, nil
 		}
 	}
 
-	logger.Println(ErrorMessageAllRetriesExhausted)
-	sanitizedResponse := makeServiceUnavailableResponse()
-	_ = WriteJSONResponse(rw, sanitizedResponse)
-	return nil, fmt.Errorf("all retries exhausted")
+	// All retries exhausted
+	logger.Printf(LogPrefixRevProxy+" All %d retry attempts exhausted for coin %s. Last error: %v", maxRetries, coin, lastError)
+
+	// Don't write response here - let the caller handle it to avoid double responses
+	// Provide more context in the error message
+	if lastError != nil {
+		return nil, fmt.Errorf("all %d retry attempts exhausted for coin %s: %w", maxRetries, coin, lastError)
+	}
+	return nil, fmt.Errorf("all %d retry attempts exhausted for coin %s", maxRetries, coin)
 }
 
 // updateRequestHeaders updates the request headers for the origin server.
@@ -348,9 +369,34 @@ func transformRequestToEXRSyntax(req *http.Request, serverURL string, requestDat
 
 // sendRequestToOriginServer sends the request to the origin server.
 func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
-	resp, err := http.DefaultClient.Do(req)
+	if httpClient == nil {
+		return nil, fmt.Errorf("HTTP client not initialized")
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		// Provide more specific error messages based on the error type
+		if netErr, ok := err.(net.Error); ok {
+			if netErr.Timeout() {
+				return nil, fmt.Errorf("request timeout after %v: %w", req.Context().Value("timeout"), err)
+			}
+			if netErr.Temporary() {
+				return nil, fmt.Errorf("temporary network error: %w", err)
+			}
+		}
+
+		// Handle connection errors
+		if strings.Contains(err.Error(), "connection refused") {
+			return nil, fmt.Errorf("server connection refused: %w", err)
+		}
+		if strings.Contains(err.Error(), "no such host") {
+			return nil, fmt.Errorf("DNS resolution failed for host: %w", err)
+		}
+		if strings.Contains(err.Error(), "too many open files") {
+			return nil, fmt.Errorf("system resource limit reached: %w", err)
+		}
+
+		return nil, fmt.Errorf("failed to send request to server: %w", err)
 	}
 
 	if resp.StatusCode != HTTPStatusOK {

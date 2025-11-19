@@ -14,7 +14,28 @@ import (
 )
 
 // initHTTPClient initializes the HTTP client with configuration values
-func initHTTPClient() {
+func initHTTPClient() error {
+	// Validate configuration values
+	if config == nil {
+		return fmt.Errorf("configuration not loaded")
+	}
+
+	if config.HttpTimeout <= 0 {
+		return fmt.Errorf("HTTP timeout must be positive, got %d", config.HttpTimeout)
+	}
+
+	if config.MaxLogSize <= 0 {
+		return fmt.Errorf("max log size must be positive, got %d", config.MaxLogSize)
+	}
+
+	if config.RateLimit <= 0 {
+		return fmt.Errorf("rate limit must be positive, got %d", config.RateLimit)
+	}
+
+	if config.ConsensusThreshold <= 0 || config.ConsensusThreshold > 1 {
+		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", config.ConsensusThreshold)
+	}
+
 	httpClient = &http.Client{
 		Timeout: time.Duration(config.HttpTimeout) * time.Second,
 		Transport: &http.Transport{
@@ -25,6 +46,9 @@ func initHTTPClient() {
 			MaxConnsPerHost:     HTTPMaxConnsPerHost,
 		},
 	}
+
+	logger.Printf("HTTP client initialized with timeout: %d seconds", config.HttpTimeout)
+	return nil
 }
 
 func getDefaultJSONResponse() *fastjson.Value {

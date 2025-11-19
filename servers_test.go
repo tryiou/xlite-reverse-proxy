@@ -13,7 +13,6 @@ import (
 )
 
 func TestServersUpdateGlobalFeesConsensus(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalFeesConsensus", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFeesConsensus (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFeesConsensus")
 
@@ -64,7 +63,6 @@ func TestServersUpdateGlobalFeesConsensus(t *testing.T) {
 }
 
 func TestServersUpdateGlobalFees_4servers(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalFees_4servers", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_4servers (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_4servers")
 
@@ -118,7 +116,6 @@ func TestServersUpdateGlobalFees_4servers(t *testing.T) {
 }
 
 func TestServersUpdateGlobalFees_10servers(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalFees_10servers", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_10servers (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_10servers")
 
@@ -163,7 +160,6 @@ func TestServersUpdateGlobalFees_10servers(t *testing.T) {
 }
 
 func TestServersUpdateGlobalHeightsConsensus(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalHeightsConsensus", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeightsConsensus")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeightsConsensus")
 
@@ -222,7 +218,6 @@ func TestServersUpdateGlobalHeightsConsensus(t *testing.T) {
 }
 
 func TestServersUpdateGlobalHeights_4servers(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalHeights_4servers", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_4servers")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_4servers")
 
@@ -275,7 +270,6 @@ func TestServersUpdateGlobalHeights_4servers(t *testing.T) {
 }
 
 func TestServersUpdateGlobalHeights_10servers(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalHeights_10servers", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_10servers")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_10servers")
 
@@ -317,7 +311,6 @@ func TestServersUpdateGlobalHeights_10servers(t *testing.T) {
 }
 
 func TestServersHashConsensusDetection(t *testing.T) {
-	defer recordTestResult("TestServersHashConsensusDetection", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersHashConsensusDetection")
 	defer log.Printf("TEST_UNIT: Finished TestServersHashConsensusDetection")
 
@@ -389,7 +382,6 @@ func TestServersHashConsensusDetection(t *testing.T) {
 }
 
 func TestServersConcurrentServerUpdates(t *testing.T) {
-	defer recordTestResult("TestServersConcurrentServerUpdates", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersConcurrentServerUpdates")
 	defer log.Printf("TEST_UNIT: Finished TestServersConcurrentServerUpdates")
 
@@ -427,13 +419,12 @@ func TestServersConcurrentServerUpdates(t *testing.T) {
 }
 
 func TestServersUpdateGlobalFees_SingleServer(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalFees_SingleServer", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_SingleServer (threshold=%.16f)", 0.6666666666666666)
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_SingleServer")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
 	config = &Config{ConsensusThreshold: 0.6666666666666666}
-	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_SingleServer (threshold=%.16f)", config.ConsensusThreshold)
-	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_SingleServer")
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -470,13 +461,12 @@ func TestServersUpdateGlobalFees_SingleServer(t *testing.T) {
 }
 
 func TestServersUpdateGlobalHeights_SingleServer(t *testing.T) {
-	defer recordTestResult("TestServersUpdateGlobalHeights_SingleServer", t.Failed())
+	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_SingleServer")
+	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_SingleServer")
 
 	oldConfig := config
 	defer func() { config = oldConfig }()
 	config = &Config{ConsensusThreshold: 0.6666666666666666}
-	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_SingleServer")
-	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_SingleServer")
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -501,7 +491,6 @@ func TestServersUpdateGlobalHeights_SingleServer(t *testing.T) {
 }
 
 func TestServersHashConsensusDetection_SingleServer(t *testing.T) {
-	defer recordTestResult("TestServersHashConsensusDetection_SingleServer", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersHashConsensusDetection_SingleServer")
 	defer log.Printf("TEST_UNIT: Finished TestServersHashConsensusDetection_SingleServer")
 
@@ -550,7 +539,6 @@ func TestServersHashConsensusDetection_SingleServer(t *testing.T) {
 }
 
 func TestServersBlockCacheManagement(t *testing.T) {
-	defer recordTestResult("TestServersBlockCacheManagement", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement")
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement")
 
@@ -622,7 +610,6 @@ func TestServersBlockCacheManagement(t *testing.T) {
 }
 
 func TestServersBlockCacheManagement_EmptyCache(t *testing.T) {
-	defer recordTestResult("TestServersBlockCacheManagement_EmptyCache", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_EmptyCache")
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_EmptyCache")
 
@@ -637,7 +624,6 @@ func TestServersBlockCacheManagement_EmptyCache(t *testing.T) {
 }
 
 func TestServersBlockCacheManagement_ExactlyAtLimit(t *testing.T) {
-	defer recordTestResult("TestServersBlockCacheManagement_ExactlyAtLimit", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_ExactlyAtLimit")
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_ExactlyAtLimit")
 
@@ -663,7 +649,6 @@ func TestServersBlockCacheManagement_ExactlyAtLimit(t *testing.T) {
 }
 
 func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
-	defer recordTestResult("TestServersBlockCacheManagement_SingleCoin", t.Failed())
 	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_SingleCoin")
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_SingleCoin")
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 
 	"gopkg.in/yaml.v2"
@@ -49,7 +50,17 @@ func newConfig(configFile string) (*Config, error) {
 		return createDefaultConfig(configFile)
 	}
 	log.Printf("Loading existing config from %q.", configFile)
-	return loadConfig(configFile)
+	cfg, err := loadConfig(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration from %s: %w", configFile, err)
+	}
+
+	// Validate configuration after loading
+	if err := validateConfig(cfg); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return cfg, nil
 }
 
 // createDefaultConfig creates a default configuration, writes it to a file, and returns it.
@@ -100,24 +111,126 @@ func createDefaultConfig(configFile string) (*Config, error) {
 	}
 
 	if err := os.WriteFile(configFile, data, FilePermissionRWXRWXR); err != nil {
-		return nil, fmt.Errorf("failed to write default config to file: %w", err)
+		return nil, fmt.Errorf("failed to write default config to file %s: %w", configFile, err)
 	}
 
-	log.Println("Default config created and written to file.")
+	log.Printf("Default config created and written to file: %s", configFile)
 	return defaultConfig, nil
+}
+
+// validateConfig validates the configuration values for correctness
+func validateConfig(cfg *Config) error {
+	// Validate HTTP timeout
+	if cfg.HttpTimeout <= 0 {
+		return fmt.Errorf("HTTP timeout must be positive, got %d", cfg.HttpTimeout)
+	}
+	if cfg.HttpTimeout > 300 { // 5 minutes max
+		return fmt.Errorf("HTTP timeout too high: %d seconds (max 300)", cfg.HttpTimeout)
+	}
+
+	// Validate rate limit
+	if cfg.RateLimit <= 0 {
+		return fmt.Errorf("rate limit must be positive, got %d", cfg.RateLimit)
+	}
+	if cfg.RateLimit > 1000 {
+		return fmt.Errorf("rate limit too high: %d requests/minute (max 1000)", cfg.RateLimit)
+	}
+
+	// Validate consensus threshold
+	if cfg.ConsensusThreshold <= 0 || cfg.ConsensusThreshold > 1 {
+		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", cfg.ConsensusThreshold)
+	}
+
+	// Validate max stored blocks
+	if cfg.MaxStoredBlocks <= 0 {
+		return fmt.Errorf("max stored blocks must be positive, got %d", cfg.MaxStoredBlocks)
+	}
+	if cfg.MaxStoredBlocks > 100 {
+		return fmt.Errorf("max stored blocks too high: %d (max 100)", cfg.MaxStoredBlocks)
+	}
+
+	// Validate max block time diff
+	if cfg.MaxBlockTimeDiff <= 0 {
+		return fmt.Errorf("max block time diff must be positive, got %d", cfg.MaxBlockTimeDiff)
+	}
+	if cfg.MaxBlockTimeDiff > 86400 { // 24 hours max
+		return fmt.Errorf("max block time diff too high: %d seconds (max 86400)", cfg.MaxBlockTimeDiff)
+	}
+
+	// Validate max log size
+	if cfg.MaxLogSize <= 0 {
+		return fmt.Errorf("max log size must be positive, got %d", cfg.MaxLogSize)
+	}
+	if cfg.MaxLogSize < 1024*1024 { // 1MB minimum
+		return fmt.Errorf("max log size too small: %d bytes (min 1048576)", cfg.MaxLogSize)
+	}
+	if cfg.MaxLogSize > 100*1024*1024 { // 100MB maximum
+		return fmt.Errorf("max log size too high: %d bytes (max %d)", cfg.MaxLogSize, 100*1024*1024)
+	}
+
+	// Validate accepted paths is not empty
+	if len(cfg.AcceptedPaths) == 0 {
+		return fmt.Errorf("accepted paths list cannot be empty")
+	}
+
+	// Validate accepted methods is not empty
+	if len(cfg.AcceptedMethods) == 0 {
+		return fmt.Errorf("accepted methods list cannot be empty")
+	}
+
+	// Validate server configurations if present
+	if len(cfg.ServersMap) == 0 && len(cfg.DynlistServersProviders) == 0 {
+		return fmt.Errorf("no servers configured - either ServersMap or DynlistServersProviders must have entries")
+	}
+
+	// Validate server URLs
+	for i, server := range cfg.ServersMap {
+		if err := validateURLFormat(server.URL); err != nil {
+			return fmt.Errorf("server %d URL validation failed: %v", i, err)
+		}
+	}
+
+	// Validate dynamic server providers
+	for i, provider := range cfg.DynlistServersProviders {
+		if err := validateURLFormat(provider); err != nil {
+			return fmt.Errorf("dynamic server provider %d URL validation failed: %v", i, err)
+		}
+	}
+
+	return nil
+}
+
+// validateURLFormat validates a URL string using proper URL parsing
+func validateURLFormat(urlStr string) error {
+	if urlStr == "" {
+		return fmt.Errorf("URL cannot be empty")
+	}
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("invalid URL format: %s", urlStr)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("URL missing protocol or host: %s", urlStr)
+	}
+	return nil
 }
 
 // loadConfig reads a configuration file and unmarshals it.
 func loadConfig(filePath string) (*Config, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("failed to read config file %s: %w", filePath, err)
 	}
 
-	log.Println("Config loaded from file.")
+	if len(data) == 0 {
+		return nil, fmt.Errorf("config file %s is empty", filePath)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML in config file %s: %w", filePath, err)
+	}
+
+	log.Printf("Config loaded from file: %s", filePath)
 	return &cfg, nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -15,15 +16,49 @@ var config *Config
 // Global HTTP client with connection pooling
 var httpClient *http.Client
 
-func startGoroutines(servers *Servers, rp_port int) {
+func startGoroutines(servers *Servers, rp_port int) error {
 	var wg sync.WaitGroup
 
+	// Start reverse proxy goroutine with error handling
+	reverseProxyErr := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				reverseProxyErr <- fmt.Errorf("reverse proxy panic: %v", r)
+			}
+		}()
 		reverseProxy(rp_port, servers)
+		reverseProxyErr <- nil
 	}()
 
-	servers.UpdateAllServersData(&wg)
-	servers.timer_UpdateAllServersData(&wg)
+	// Start server update routines with error handling
+	updateErr := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				updateErr <- fmt.Errorf("server update panic: %v", r)
+			}
+		}()
+		servers.UpdateAllServersData(&wg)
+		servers.timer_UpdateAllServersData(&wg)
+		updateErr <- nil
+	}()
+
+	// Check for immediate startup errors
+	select {
+	case rpErr := <-reverseProxyErr:
+		if rpErr != nil {
+			return fmt.Errorf("failed to start reverse proxy: %w", rpErr)
+		}
+	case updErr := <-updateErr:
+		if updErr != nil {
+			return fmt.Errorf("failed to start server updates: %w", updErr)
+		}
+	default:
+		// No immediate errors, continue normally
+	}
+
+	return nil
 }
 
 func (servers *Servers) timer_UpdateAllServersData(wg *sync.WaitGroup) {
@@ -54,8 +89,10 @@ func main() {
 		log.Fatalf("Error loading configuration: %v", err)
 	}
 
-	// Initialize HTTP client with config values
-	initHTTPClient()
+	// Initialize HTTP client with config values and validate configuration
+	if err := initHTTPClient(); err != nil {
+		log.Fatalf("Failed to initialize HTTP client: %v", err)
+	}
 
 	// Initialize optimized block cache with config value after config is loaded
 	optimizedBlockCache = NewOptimizedBlockCache(config.MaxStoredBlocks)
@@ -75,7 +112,10 @@ func main() {
 		UpdateServersFromJSON(&servers)
 	}
 
-	go startGoroutines(&servers, DefaultPort)
+	// Start goroutines with improved error handling
+	if err := startGoroutines(&servers, DefaultPort); err != nil {
+		log.Fatalf("Failed to start goroutines: %v", err)
+	}
 
 	// Keep the main goroutine running
 	select {}

@@ -15,10 +15,6 @@ import (
 
 func TestReverseProxy_CachedEndpoints(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_CachedEndpoints")
-	defer func() {
-		log.Printf("TEST_UNIT: Finished TestReverseProxy_CachedEndpoints")
-		recordTestResult("TestReverseProxy_CachedEndpoints", t.Failed())
-	}()
 
 	// Set minimal config required for this test
 	config = &Config{
@@ -63,10 +59,6 @@ func TestReverseProxy_CachedEndpoints(t *testing.T) {
 
 func TestReverseProxy_BackendRouting(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_BackendRouting")
-	defer func() {
-		log.Printf("TEST_UNIT: Finished TestReverseProxy_BackendRouting")
-		recordTestResult("TestReverseProxy_BackendRouting", t.Failed())
-	}()
 
 	// Mock backend server
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +84,12 @@ func TestReverseProxy_BackendRouting(t *testing.T) {
 		RateLimit:               100,
 		ConsensusThreshold:      0.6,
 		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576, // 1MB minimum
+	}
+
+	// Initialize HTTP client for tests
+	if err := initHTTPClient(); err != nil {
+		t.Fatalf("Failed to initialize HTTP client: %v", err)
 	}
 
 	// Test request to backend endpoint
@@ -112,10 +110,6 @@ func TestReverseProxy_BackendRouting(t *testing.T) {
 
 func TestReverseProxy_BackendRetry(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_BackendRetry")
-	defer func() {
-		log.Printf("TEST_UNIT: Finished TestReverseProxy_BackendRetry")
-		recordTestResult("TestReverseProxy_BackendRetry", t.Failed())
-	}()
 
 	callCount := 0
 	// Backend that fails first request but succeeds second
@@ -143,6 +137,12 @@ func TestReverseProxy_BackendRetry(t *testing.T) {
 		RateLimit:               100,
 		ConsensusThreshold:      0.6,
 		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576, // 1MB minimum
+	}
+
+	// Initialize HTTP client for tests
+	if err := initHTTPClient(); err != nil {
+		t.Fatalf("Failed to initialize HTTP client: %v", err)
 	}
 
 	req := httptest.NewRequest("POST", "/", strings.NewReader(
@@ -162,14 +162,14 @@ func TestReverseProxy_BackendRetry(t *testing.T) {
 
 func TestReverseProxy_NotAcceptedPath(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_NotAcceptedPath")
-	defer func() {
-		log.Printf("TEST_UNIT: Finished TestReverseProxy_NotAcceptedPath")
-		recordTestResult("TestReverseProxy_NotAcceptedPath", t.Failed())
-	}()
 
 	config = &Config{AcceptedPaths: []string{"/api"}}
 	req := httptest.NewRequest("GET", "/invalid", nil)
 	w := httptest.NewRecorder()
+
+	// Create a minimal servers instance
+	servers := &Servers{}
+
 	reverseProxyHandler(servers)(w, req)
 
 	log.Printf("TEST_UNIT: Received status for invalid path: %d", w.Result().StatusCode)
@@ -178,10 +178,6 @@ func TestReverseProxy_NotAcceptedPath(t *testing.T) {
 
 func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_NotAcceptedMethod")
-	defer func() {
-		log.Printf("TEST_UNIT: Finished TestReverseProxy_NotAcceptedMethod")
-		recordTestResult("TestReverseProxy_NotAcceptedMethod", t.Failed())
-	}()
 
 	config = &Config{AcceptedMethods: []string{"validmethod"}}
 	req := httptest.NewRequest("POST", "/", strings.NewReader(
@@ -189,6 +185,10 @@ func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
+
+	// Create a minimal servers instance
+	servers := &Servers{}
+
 	reverseProxyHandler(servers)(w, req)
 
 	log.Printf("TEST_UNIT: Received status for invalid method: %d", w.Result().StatusCode)
@@ -197,10 +197,6 @@ func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 
 func TestReverseProxy_CoinExtraction(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_CoinExtraction")
-	defer func() {
-		log.Printf("TEST_UNIT: Finished TestReverseProxy_CoinExtraction")
-		recordTestResult("TestReverseProxy_CoinExtraction", t.Failed())
-	}()
 
 	testCases := []struct {
 		body, expectedCoin string

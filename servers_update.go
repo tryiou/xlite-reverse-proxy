@@ -240,9 +240,10 @@ func updateServersFromProviders(servers *Servers) {
 			continue
 		}
 
-		// NOTE: The dynamic update of config.ServersMap is not thread-safe.
-		// A mutex should protect config reads/writes to prevent race conditions.
+		// Update config with mutex protection to prevent race conditions
+		mu.Lock()
 		config.ServersMap = serverConfigs
+		mu.Unlock()
 		UpdateServersFromJSON(servers)
 
 		// Successfully updated from a provider, so we can stop.
