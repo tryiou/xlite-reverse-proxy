@@ -1,13 +1,32 @@
 package main
 
 import (
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 )
 
+// setupTestConfigForServersUpdate sets up a test config for servers update tests
+func setupTestConfigForServersUpdate() {
+	globalConfig.config = &Config{
+		DynlistServersProviders: []string{"http://test.example.com"},
+		AcceptedMethods:         []string{"heights", "fees"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		MaxLogSize:              1024 * 1024,
+		ConsensusThreshold:      0.6,
+		MaxStoredBlocks:         10,
+		MaxBlockTimeDiff:        7200,
+	}
+	globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	globalConfig.cache = NewOptimizedBlockCache(10)
+}
+
 // TestDynamicServerUpdateThreadSafety tests that dynamic server updates are thread-safe
 func TestDynamicServerUpdateThreadSafety(t *testing.T) {
+	setupTestConfigForServersUpdate()
+
 	// Skip race condition test if not running with -race flag
 	if !testing.Verbose() {
 		t.Skip("Skipping race condition test - run with -race flag to test")
@@ -26,7 +45,7 @@ func TestDynamicServerUpdateThreadSafety(t *testing.T) {
 			defer wg.Done()
 			// This should not panic or cause race conditions with the mutex
 			locks.config.Lock()
-			config = testConfig
+			globalConfig.config = testConfig
 			locks.config.Unlock()
 		}()
 	}
@@ -37,33 +56,37 @@ func TestDynamicServerUpdateThreadSafety(t *testing.T) {
 
 // TestConfigAssignmentWithMutex tests that config assignment is protected by mutex
 func TestConfigAssignmentWithMutex(t *testing.T) {
-	originalConfig := config
+	setupTestConfigForServersUpdate()
+
+	originalConfig := globalConfig.config
 
 	// Test that we can safely assign config with mutex
 	locks.config.Lock()
-	config = &Config{
+	globalConfig.config = &Config{
 		DynlistServersProviders: []string{"http://safe.example.com"},
 		AcceptedMethods:         []string{"test"},
 	}
 	locks.config.Unlock()
 
 	// Verify assignment worked
-	if config == originalConfig {
+	if globalConfig.config == originalConfig {
 		t.Error("Config assignment failed")
 	}
 
-	if config.DynlistServersProviders[0] != "http://safe.example.com" {
+	if globalConfig.config.DynlistServersProviders[0] != "http://safe.example.com" {
 		t.Error("Config assignment content incorrect")
 	}
 
 	// Restore original config
 	locks.config.Lock()
-	config = originalConfig
+	globalConfig.config = originalConfig
 	locks.config.Unlock()
 }
 
 // TestMultipleConfigReads tests that multiple concurrent reads don't cause issues
 func TestMultipleConfigReads(t *testing.T) {
+	setupTestConfigForServersUpdate()
+
 	// Simulate multiple goroutines reading config concurrently
 	var wg sync.WaitGroup
 
@@ -73,7 +96,7 @@ func TestMultipleConfigReads(t *testing.T) {
 			defer wg.Done()
 			// Safe read with mutex
 			locks.config.RLock()
-			_ = len(config.DynlistServersProviders)
+			_ = len(globalConfig.config.DynlistServersProviders)
 			locks.config.RUnlock()
 		}()
 	}
@@ -84,33 +107,35 @@ func TestMultipleConfigReads(t *testing.T) {
 
 // TestConfigUpdateSequence tests a sequence of read-write operations
 func TestConfigUpdateSequence(t *testing.T) {
-	originalConfig := config
+	setupTestConfigForServersUpdate()
+
+	originalConfig := globalConfig.config
 
 	// Perform a series of operations that could cause race conditions
 	operations := []func(){
 		func() {
 			locks.config.Lock()
-			config = &Config{AcceptedMethods: []string{"method1"}}
+			globalConfig.config = &Config{AcceptedMethods: []string{"method1"}}
 			locks.config.Unlock()
 		},
 		func() {
 			locks.config.RLock()
-			_ = config.AcceptedMethods
+			_ = globalConfig.config.AcceptedMethods
 			locks.config.RUnlock()
 		},
 		func() {
 			locks.config.Lock()
-			config = &Config{AcceptedMethods: []string{"method2"}}
+			globalConfig.config = &Config{AcceptedMethods: []string{"method2"}}
 			locks.config.Unlock()
 		},
 		func() {
 			locks.config.RLock()
-			_ = len(config.DynlistServersProviders)
+			_ = len(globalConfig.config.DynlistServersProviders)
 			locks.config.RUnlock()
 		},
 		func() {
 			locks.config.Lock()
-			config = &Config{AcceptedMethods: []string{"method3"}}
+			globalConfig.config = &Config{AcceptedMethods: []string{"method3"}}
 			locks.config.Unlock()
 		},
 	}
@@ -122,13 +147,13 @@ func TestConfigUpdateSequence(t *testing.T) {
 
 	// Verify final state
 	locks.config.RLock()
-	if len(config.AcceptedMethods) != 1 || config.AcceptedMethods[0] != "method3" {
-		t.Errorf("Final config state incorrect: %v", config.AcceptedMethods)
+	if len(globalConfig.config.AcceptedMethods) != 1 || globalConfig.config.AcceptedMethods[0] != "method3" {
+		t.Errorf("Final config state incorrect: %v", globalConfig.config.AcceptedMethods)
 	}
 	locks.config.RUnlock()
 
 	// Restore original config
 	locks.config.Lock()
-	config = originalConfig
+	globalConfig.config = originalConfig
 	locks.config.Unlock()
 }

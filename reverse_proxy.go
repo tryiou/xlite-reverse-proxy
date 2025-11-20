@@ -408,11 +408,12 @@ func transformRequestToEXRSyntax(req *http.Request, serverURL string, requestDat
 
 // sendRequestToOriginServer sends the request to the origin server.
 func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
-	if httpClient == nil {
+	client := globalConfig.GetClient()
+	if client == nil {
 		return nil, fmt.Errorf("HTTP client not initialized")
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		// Provide more specific error messages based on the error type
 		if netErr, ok := err.(net.Error); ok {
@@ -482,7 +483,8 @@ func logRequest(server Server, requestData *RequestData, reqURL *url.URL, startT
 
 // isPathAccepted checks if the request path is in the acceptedPaths list.
 func isPathAccepted(path string) bool {
-	for _, acceptedPath := range config.AcceptedPaths {
+	cfg := globalConfig.GetConfig()
+	for _, acceptedPath := range cfg.AcceptedPaths {
 		if path == acceptedPath {
 			return true
 		}
@@ -492,7 +494,8 @@ func isPathAccepted(path string) bool {
 
 // isMethodAccepted checks if the request method is in the acceptedMethods list.
 func isMethodAccepted(method string) bool {
-	for _, acceptedMethod := range config.AcceptedMethods {
+	cfg := globalConfig.GetConfig()
+	for _, acceptedMethod := range cfg.AcceptedMethods {
 		if method == acceptedMethod {
 			return true
 		}

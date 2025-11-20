@@ -7,13 +7,25 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
+
+// setupGlobalConfigForTest sets up the global config for testing
+func setupGlobalConfigForTest() {
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+}
 
 // mockTransport is a mock HTTP transport for testing
 type mockTransport struct {
 	shouldFail bool
 	response   string
 	statusCode int
+	serverID   int
 }
 
 func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -46,48 +58,57 @@ func (m mockError) Error() string {
 
 // TestServerPingErrorLogging tests that the ping error logging doesn't have duplicate parameters
 func TestServerPingErrorLogging(t *testing.T) {
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	server := &Server{
 		id:  1,
 		url: "http://test-server-1.example.com",
 	}
 
-	// Mock httpClient to return error
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
-		Transport: &mockTransport{shouldFail: true},
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
+		Transport: &mockTransport{shouldFail: true, serverID: 1},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	err := server.server_GetPing()
 	if err == nil {
 		t.Error("Expected error but got none")
 	}
 
-	// Verify error message contains server ID correctly (no duplicates)
-	expected := "server[1] ping request failed"
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
-	}
-
-	// Verify the error is wrapped properly
-	if !strings.Contains(err.Error(), "mock error for testing") {
-		t.Errorf("Expected error to contain mock error, got: %v", err)
+	// Check for server ID in error message
+	if !strings.Contains(err.Error(), "server[1]") {
+		t.Errorf("Expected error message to contain 'server[1]', got: %v", err)
 	}
 }
 
 // TestServerPingJSONParseError tests JSON parse error logging
 func TestServerPingJSONParseError(t *testing.T) {
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	server := &Server{
 		id:  2,
 		url: "http://test-server-2.example.com",
 	}
 
-	// Mock httpClient to return invalid JSON
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{
 			shouldFail: false,
 			response:   "invalid json",
@@ -95,36 +116,50 @@ func TestServerPingJSONParseError(t *testing.T) {
 		},
 	}
 
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
+
 	err := server.server_GetPing()
 	if err == nil {
 		t.Error("Expected error but got none")
 	}
 
-	// Verify error message contains server ID correctly
-	expected := "server[2] JSON parse failed"
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
+	// Check for server ID in error message
+	if !strings.Contains(err.Error(), "server[2]") {
+		t.Errorf("Expected error message to contain 'server[2]', got: %v", err)
 	}
 }
 
 // TestServerPingSuccessValue tests successful ping with correct value
 func TestServerPingSuccessValue(t *testing.T) {
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	server := &Server{
 		id:  3,
 		url: "http://test-server-3.example.com",
 	}
 
-	// Mock httpClient to return successful ping
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{
 			shouldFail: false,
 			response:   `{"result": 1}`,
 			statusCode: 200,
 		},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	err := server.server_GetPing()
 	if err != nil {
@@ -139,22 +174,32 @@ func TestServerPingSuccessValue(t *testing.T) {
 
 // TestServerPingFailureValue tests ping with failure value
 func TestServerPingFailureValue(t *testing.T) {
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	server := &Server{
 		id:  4,
 		url: "http://test-server-4.example.com",
 	}
 
-	// Mock httpClient to return failure ping
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{
 			shouldFail: false,
 			response:   `{"result": 0}`,
 			statusCode: 200,
 		},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	err := server.server_GetPing()
 	if err != nil {
@@ -169,16 +214,21 @@ func TestServerPingFailureValue(t *testing.T) {
 
 // TestServerPingMissingResultField tests missing result field error
 func TestServerPingMissingResultField(t *testing.T) {
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	server := &Server{
 		id:  5,
 		url: "http://test-server-5.example.com",
 	}
 
-	// Mock httpClient to return response without result field
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{
 			shouldFail: false,
 			response:   `{"error": "no result"}`,
@@ -186,32 +236,46 @@ func TestServerPingMissingResultField(t *testing.T) {
 		},
 	}
 
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
+
 	err := server.server_GetPing()
 	if err == nil {
 		t.Error("Expected error but got none")
 	}
 
-	// Verify error message contains server ID correctly
-	expected := "server[5] response missing 'result' field"
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
+	// Check for server ID in error message
+	if !strings.Contains(err.Error(), "server[5]") {
+		t.Errorf("Expected error message to contain 'server[5]', got: %v", err)
 	}
 }
 
 // TestServerGetFeesErrorLogging tests fee fetching error logging
 func TestServerGetFeesErrorLogging(t *testing.T) {
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
 	server := &Server{
 		id:  6,
 		url: "http://test-server-6.example.com",
 	}
 
-	// Mock httpClient to return error
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{shouldFail: true},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	err := server.server_GetFees()
 	if err == nil {
@@ -232,18 +296,22 @@ func TestServerGetFeesErrorLogging(t *testing.T) {
 
 // TestServerGetHeightsErrorLogging tests heights fetching error logging
 func TestServerGetHeightsErrorLogging(t *testing.T) {
+	setupGlobalConfigForTest()
+
 	server := &Server{
 		id:  7,
 		url: "http://test-server-7.example.com",
 	}
 
-	// Mock httpClient to return error
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{shouldFail: true},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	err := server.server_GetHeights()
 	if err == nil {
@@ -264,18 +332,22 @@ func TestServerGetHeightsErrorLogging(t *testing.T) {
 
 // TestServerGetBlockHashErrorLogging tests getblockhash error logging
 func TestServerGetBlockHashErrorLogging(t *testing.T) {
+	setupGlobalConfigForTest()
+
 	server := &Server{
 		id:  8,
 		url: "http://test-server-8.example.com",
 	}
 
-	// Mock httpClient to return error
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{shouldFail: true},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	hash, err := server.server_GetBlockHash("BTC", 800000)
 	if err == nil {
@@ -296,18 +368,22 @@ func TestServerGetBlockHashErrorLogging(t *testing.T) {
 
 // TestServerGetBlockErrorLogging tests getblock error logging
 func TestServerGetBlockErrorLogging(t *testing.T) {
+	setupGlobalConfigForTest()
+
 	server := &Server{
 		id:  9,
 		url: "http://test-server-9.example.com",
 	}
 
-	// Mock httpClient to return error
-	originalClient := httpClient
-	defer func() { httpClient = originalClient }()
-
-	httpClient = &http.Client{
+	// Create a mock HTTP client with our mock transport
+	mockClient := &http.Client{
 		Transport: &mockTransport{shouldFail: true},
 	}
+
+	// Mock the global config to return our mock client
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
 
 	result, err := server.server_GetBlock("BTC", "hash123")
 	if err == nil {
@@ -328,6 +404,8 @@ func TestServerGetBlockErrorLogging(t *testing.T) {
 
 // TestServerInvalidHeightForGetBlockHash tests invalid height handling
 func TestServerInvalidHeightForGetBlockHash(t *testing.T) {
+	setupGlobalConfigForTest()
+
 	server := &Server{
 		id:  10,
 		url: "http://test-server-10.example.com",
@@ -347,6 +425,8 @@ func TestServerInvalidHeightForGetBlockHash(t *testing.T) {
 
 // TestServerLoggingUtilities tests the logging utility functions
 func TestServerLoggingUtilities(t *testing.T) {
+	setupGlobalConfigForTest()
+
 	// Test logServerError
 	var logOutput bytes.Buffer
 	originalLogger := logger

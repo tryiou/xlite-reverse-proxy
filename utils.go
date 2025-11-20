@@ -8,49 +8,35 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/valyala/fastjson"
 )
 
 // initHTTPClient initializes the HTTP client with configuration values
 func initHTTPClient() error {
-	// Validate configuration values
-	if config == nil {
+	cfg := globalConfig.GetConfig()
+	if cfg == nil {
 		return fmt.Errorf("configuration not loaded")
 	}
 
-	if config.HttpTimeout <= 0 {
-		return fmt.Errorf("HTTP timeout must be positive, got %d", config.HttpTimeout)
+	if cfg.HttpTimeout <= 0 {
+		return fmt.Errorf("HTTP timeout must be positive, got %d", cfg.HttpTimeout)
 	}
 
-	if config.MaxLogSize <= 0 {
-		return fmt.Errorf("max log size must be positive, got %d", config.MaxLogSize)
+	if cfg.MaxLogSize <= 0 {
+		return fmt.Errorf("max log size must be positive, got %d", cfg.MaxLogSize)
 	}
 
-	if config.RateLimit <= 0 {
-		return fmt.Errorf("rate limit must be positive, got %d", config.RateLimit)
+	if cfg.RateLimit <= 0 {
+		return fmt.Errorf("rate limit must be positive, got %d", cfg.RateLimit)
 	}
 
-	if config.ConsensusThreshold <= 0 || config.ConsensusThreshold > 1 {
-		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", config.ConsensusThreshold)
+	if cfg.ConsensusThreshold <= 0 || cfg.ConsensusThreshold > 1 {
+		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", cfg.ConsensusThreshold)
 	}
 
-	locks.config.RLock()
-	defer locks.config.RUnlock()
-
-	httpClient = &http.Client{
-		Timeout: time.Duration(config.HttpTimeout) * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        HTTPMaxIdleConns,
-			IdleConnTimeout:     time.Duration(config.HttpTimeout) * time.Second,
-			DisableCompression:  false,
-			MaxIdleConnsPerHost: HTTPMaxIdleConnsPerHost,
-			MaxConnsPerHost:     HTTPMaxConnsPerHost,
-		},
-	}
-
-	logger.Printf("HTTP client initialized with timeout: %d seconds", config.HttpTimeout)
+	// HTTP client is now managed by globalConfig, just log the initialization
+	logger.Printf("HTTP client initialized with timeout: %d seconds", cfg.HttpTimeout)
 	return nil
 }
 

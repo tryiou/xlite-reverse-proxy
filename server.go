@@ -235,8 +235,10 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 		payload string
 	)
 
+	cfg := globalConfig.GetConfig()
+
 	// Use provided timeout or default from config
-	timeout := config.HttpTimeout
+	timeout := cfg.HttpTimeout
 	if len(timeoutSeconds) > 0 {
 		timeout = timeoutSeconds[0]
 	}
@@ -291,7 +293,8 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 	defer cancel()
 	req = req.WithContext(ctx)
 
-	res, err := httpClient.Do(req)
+	client := globalConfig.GetClient()
+	res, err := client.Do(req)
 	if err != nil {
 		elapsed := time.Since(reqTimer)
 

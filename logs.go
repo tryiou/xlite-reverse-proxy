@@ -35,7 +35,8 @@ func initLogger() {
 				continue
 			}
 
-			if fileInfo.Size() >= int64(config.MaxLogSize) {
+			cfg := globalConfig.GetConfig()
+			if fileInfo.Size() >= int64(cfg.MaxLogSize) {
 				// Rotate the log file
 				err := rotateLogFile()
 				if err != nil {

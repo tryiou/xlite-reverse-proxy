@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"sync"
 	"testing"
@@ -12,13 +13,36 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+// setupGlobalConfigForServersTest sets up the global config for servers tests
+func setupGlobalConfigForServersTest() {
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			ConsensusThreshold: 0.6666666666666666,
+			HttpTimeout:        5,
+			RateLimit:          100,
+			MaxLogSize:         1024 * 1024,
+			MaxStoredBlocks:    10,
+			MaxBlockTimeDiff:   7200,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+		globalConfig.cache = NewOptimizedBlockCache(10)
+	}
+}
+
 func TestServersUpdateGlobalFeesConsensus(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFeesConsensus (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFeesConsensus")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	// Set up global config first
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+		globalConfig.cache = NewOptimizedBlockCache(10)
+	}
+
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -66,9 +90,11 @@ func TestServersUpdateGlobalFees_4servers(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_4servers (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_4servers")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	setupGlobalConfigForServersTest()
+
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -119,9 +145,9 @@ func TestServersUpdateGlobalFees_10servers(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_10servers (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_10servers")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: make([]*Server, 10)}
 	for i := 0; i < 10; i++ {
@@ -163,9 +189,9 @@ func TestServersUpdateGlobalHeightsConsensus(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeightsConsensus")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeightsConsensus")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -221,9 +247,9 @@ func TestServersUpdateGlobalHeights_4servers(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_4servers")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_4servers")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -273,9 +299,9 @@ func TestServersUpdateGlobalHeights_10servers(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_10servers")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_10servers")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: make([]*Server, 10)}
 	for i := 0; i < 10; i++ {
@@ -314,13 +340,13 @@ func TestServersHashConsensusDetection(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersHashConsensusDetection")
 	defer log.Printf("TEST_UNIT: Finished TestServersHashConsensusDetection")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666, MaxStoredBlocks: 10}
 
 	// Initialize optimized block cache with BTC block 800000
-	optimizedBlockCache = NewOptimizedBlockCache(config.MaxStoredBlocks)
-	optimizedBlockCache.Add("BTC_consensus_hash", &BlockCache{
+	cache := NewOptimizedBlockCache(globalConfig.config.MaxStoredBlocks)
+	cache.Add("BTC_consensus_hash", &BlockCache{
 		BlockHash: "0000...abc",
 		timeDiff:  15,
 		cachedAt:  time.Now(),
@@ -422,9 +448,9 @@ func TestServersUpdateGlobalFees_SingleServer(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalFees_SingleServer (threshold=%.16f)", 0.6666666666666666)
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalFees_SingleServer")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -464,9 +490,9 @@ func TestServersUpdateGlobalHeights_SingleServer(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersUpdateGlobalHeights_SingleServer")
 	defer log.Printf("TEST_UNIT: Finished TestServersUpdateGlobalHeights_SingleServer")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	servers := &Servers{Slice: []*Server{
 		{
@@ -494,13 +520,13 @@ func TestServersHashConsensusDetection_SingleServer(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersHashConsensusDetection_SingleServer")
 	defer log.Printf("TEST_UNIT: Finished TestServersHashConsensusDetection_SingleServer")
 
-	oldConfig := config
-	defer func() { config = oldConfig }()
-	config = &Config{ConsensusThreshold: 0.6666666666666666}
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{ConsensusThreshold: 0.6666666666666666}
 
 	// Initialize optimized block cache
-	optimizedBlockCache = NewOptimizedBlockCache(config.MaxStoredBlocks)
-	optimizedBlockCache.Add("BTC_single", &BlockCache{
+	cache := NewOptimizedBlockCache(globalConfig.config.MaxStoredBlocks)
+	cache.Add("BTC_single", &BlockCache{
 		BlockHash: "0000...abc",
 		timeDiff:  15,
 		cachedAt:  time.Now(),
@@ -544,7 +570,7 @@ func TestServersBlockCacheManagement(t *testing.T) {
 
 	// Reset optimized cache with correct limit
 	maxStoredBlocks := 3
-	optimizedBlockCache = NewOptimizedBlockCache(maxStoredBlocks)
+	globalConfig.cache = NewOptimizedBlockCache(maxStoredBlocks)
 	log.Printf("TEST_UNIT: Reset optimized block cache with limit: %d", maxStoredBlocks)
 
 	// Test per-coin cache limits with multiple coins
@@ -552,7 +578,7 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	// Entry 0 should be oldest, entry 4 should be newest
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		optimizedBlockCache.Add(key, &BlockCache{
+		globalConfig.cache.Add(key, &BlockCache{
 			BlockHash: "btc_block_hash_" + strconv.Itoa(i),
 			timeDiff:  float64(i),
 			cachedAt:  time.Now().Add(time.Duration(-5+i) * time.Minute), // Earlier entries are older
@@ -563,7 +589,7 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	// Entry 0 should be oldest, entry 3 should be newest
 	for i := 0; i < 4; i++ {
 		key := fmt.Sprintf("LTC_hash_%d", i)
-		optimizedBlockCache.Add(key, &BlockCache{
+		globalConfig.cache.Add(key, &BlockCache{
 			BlockHash: "ltc_block_hash_" + strconv.Itoa(i),
 			timeDiff:  float64(i),
 			cachedAt:  time.Now().Add(time.Duration(-4+i) * time.Minute), // Earlier entries are older
@@ -573,7 +599,7 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	// Create DOGE entries - should be under limit, not affected
 	for i := 0; i < 2; i++ {
 		key := fmt.Sprintf("DOGE_hash_%d", i)
-		optimizedBlockCache.Add(key, &BlockCache{
+		globalConfig.cache.Add(key, &BlockCache{
 			BlockHash: "doge_block_hash_" + strconv.Itoa(i),
 			timeDiff:  float64(i),
 			cachedAt:  time.Now().Add(time.Duration(-2+i) * time.Minute), // Earlier entries are older
@@ -581,9 +607,10 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	}
 
 	// Check counts after all additions
-	initialBTCCount := optimizedBlockCache.coinCounts["BTC"]
-	initialLTCCount := optimizedBlockCache.coinCounts["LTC"]
-	initialDOGECount := optimizedBlockCache.coinCounts["DOGE"]
+	cache := globalConfig.GetCache()
+	initialBTCCount := cache.coinCounts["BTC"]
+	initialLTCCount := cache.coinCounts["LTC"]
+	initialDOGECount := cache.coinCounts["DOGE"]
 	log.Printf("TEST_UNIT: Cache counts after additions - BTC: %d, LTC: %d, DOGE: %d",
 		initialBTCCount, initialLTCCount, initialDOGECount)
 
@@ -595,7 +622,7 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	// Verify we can retrieve entries
 	for i := 2; i < 5; i++ { // Should have entries 2, 3, 4 (oldest 0, 1 purged)
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		if _, exists := optimizedBlockCache.Get(key); !exists {
+		if _, exists := cache.Get(key); !exists {
 			t.Errorf("Expected to find entry %s but it was not found", key)
 		}
 	}
@@ -603,7 +630,7 @@ func TestServersBlockCacheManagement(t *testing.T) {
 	// Verify purged entries are not found
 	for i := 0; i < 2; i++ { // Should have entries 0, 1 purged
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		if _, exists := optimizedBlockCache.Get(key); exists {
+		if _, exists := cache.Get(key); exists {
 			t.Errorf("Entry %s should have been purged but was still found", key)
 		}
 	}
@@ -614,37 +641,37 @@ func TestServersBlockCacheManagement_EmptyCache(t *testing.T) {
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_EmptyCache")
 
 	// Test with empty cache
-	optimizedBlockCache = NewOptimizedBlockCache(5)
+	cache := NewOptimizedBlockCache(5)
 
-	coinCounts := optimizedBlockCache.coinCounts
+	coinCounts := cache.coinCounts
 	assert.Equal(t, 0, len(coinCounts), "Cache should start empty")
 
-	optimizedBlockCache.Purge()
-	assert.Equal(t, 0, len(optimizedBlockCache.coinCounts), "Empty cache should remain empty after purge")
+	cache.Purge()
+	assert.Equal(t, 0, len(cache.coinCounts), "Empty cache should remain empty after purge")
 }
 
 func TestServersBlockCacheManagement_ExactlyAtLimit(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_ExactlyAtLimit")
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_ExactlyAtLimit")
 
-	optimizedBlockCache = NewOptimizedBlockCache(3)
+	cache := NewOptimizedBlockCache(3)
 
 	// Add exactly maxStoredBlocks entries for BTC
 	maxStoredBlocks := 3
 	for i := 0; i < maxStoredBlocks; i++ {
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		optimizedBlockCache.Add(key, &BlockCache{
+		cache.Add(key, &BlockCache{
 			BlockHash: "btc_hash_" + strconv.Itoa(i),
 			timeDiff:  float64(i),
 			cachedAt:  time.Now().Add(time.Duration(-i) * time.Minute), // Earlier entries are older
 		})
 	}
 
-	initialCount := optimizedBlockCache.coinCounts["BTC"]
+	initialCount := cache.coinCounts["BTC"]
 	assert.Equal(t, maxStoredBlocks, initialCount, "Should start with exactly limit entries")
 
-	optimizedBlockCache.Purge()
-	finalCount := optimizedBlockCache.coinCounts["BTC"]
+	cache.Purge()
+	finalCount := cache.coinCounts["BTC"]
 	assert.Equal(t, maxStoredBlocks, finalCount, "Cache at limit should remain unchanged")
 }
 
@@ -652,7 +679,7 @@ func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestServersBlockCacheManagement_SingleCoin")
 	defer log.Printf("TEST_UNIT: Finished TestServersBlockCacheManagement_SingleCoin")
 
-	optimizedBlockCache = NewOptimizedBlockCache(2)
+	cache := NewOptimizedBlockCache(2)
 
 	// Test with single coin having many entries
 	maxStoredBlocks := 2
@@ -662,7 +689,7 @@ func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
 	// Entry 0 should be oldest, entry 9 should be newest
 	for i := 0; i < totalEntries; i++ {
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		optimizedBlockCache.Add(key, &BlockCache{
+		cache.Add(key, &BlockCache{
 			BlockHash: "btc_hash_" + strconv.Itoa(i),
 			timeDiff:  float64(i),
 			cachedAt:  time.Now().Add(time.Duration(-10+i) * time.Minute), // Earlier entries are older
@@ -670,13 +697,13 @@ func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
 	}
 
 	// Check final count after all additions and purging
-	finalCount := optimizedBlockCache.coinCounts["BTC"]
+	finalCount := cache.coinCounts["BTC"]
 	assert.Equal(t, maxStoredBlocks, finalCount, "Should be reduced to limit")
 
 	// Verify only the newest entries remain
 	for i := 8; i < 10; i++ { // Should have entries 8, 9 (newest 2)
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		if _, exists := optimizedBlockCache.Get(key); !exists {
+		if _, exists := cache.Get(key); !exists {
 			t.Errorf("Expected to find entry %s but it was not found", key)
 		}
 	}
@@ -684,7 +711,7 @@ func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
 	// Verify old entries are purged
 	for i := 0; i < 8; i++ { // Should have entries 0-7 purged
 		key := fmt.Sprintf("BTC_hash_%d", i)
-		if _, exists := optimizedBlockCache.Get(key); exists {
+		if _, exists := cache.Get(key); exists {
 			t.Errorf("Entry %s should have been purged but was still found", key)
 		}
 	}

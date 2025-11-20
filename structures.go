@@ -301,6 +301,3 @@ func (obc *OptimizedBlockCache) rebuildTimeList() {
 
 	obc.timeTail = prev
 }
-
-// Global optimized cache instance
-var optimizedBlockCache *OptimizedBlockCache

@@ -158,7 +158,7 @@ func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *
 	// Update coin with new block data
 	coinMap.getBlockHash = blockData.BlockHash
 	valid := true
-	if blockData.timeDiff < float64(config.MaxBlockTimeDiff) {
+	if blockData.timeDiff < float64(globalConfig.GetConfig().MaxBlockTimeDiff) {
 		coinMap.timeDiff = blockData.timeDiff
 	} else {
 		coinMap.timeDiff = InvalidTimeDiffValue
@@ -586,14 +586,14 @@ func (s *BlockCacheService) GetOrFetch(server *Server, coin, hash string, height
 	blockCacheKey := fmt.Sprintf("%s_%s", coin, hash)
 
 	// Use optimized cache
-	if existing, exists := optimizedBlockCache.Get(blockCacheKey); exists {
+	if existing, exists := globalConfig.GetCache().Get(blockCacheKey); exists {
 		return existing, true, nil
 	}
 	blockData, err := s.FetchAndCacheBlock(server, coin, hash, height)
 	if err != nil {
 		return nil, false, err
 	}
-	optimizedBlockCache.Add(blockCacheKey, blockData)
+	globalConfig.GetCache().Add(blockCacheKey, blockData)
 	return blockData, false, nil
 }
 
@@ -722,7 +722,7 @@ func DetermineConsensusHashes(votesPerCoin map[string]map[string][]int) map[stri
 		// Find the first hash that meets the consensus threshold.
 		for hash, serverIDsWithHash := range votesForHash {
 			ratio := float64(len(serverIDsWithHash)) / float64(totalVotes)
-			if ratio >= config.ConsensusThreshold {
+			if ratio >= globalConfig.GetConfig().ConsensusThreshold {
 				consensusHashes[coin] = hash
 				break // Consensus found for this coin.
 			}
@@ -838,7 +838,7 @@ func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 
 		// Process each fee value for the coin
 		for identifier, count := range elementCounts {
-			if ratio := float64(count) / float64(totalServers); ratio >= config.ConsensusThreshold {
+			if ratio := float64(count) / float64(totalServers); ratio >= globalConfig.GetConfig().ConsensusThreshold {
 				parts := strings.Split(identifier, ":")
 				value, err := strconv.ParseFloat(parts[1], 64)
 				if err != nil {
@@ -895,7 +895,7 @@ func calculateRatio(heightsMap map[string][]int, mostCommonHeightsRanges map[str
 
 		ratio := float64(mostCommonLen) / float64(heightsLen)
 		// Min ratio: config.ConsensusThreshold = 0.66 = 66.67 % servers agreeing on range
-		if ratio >= config.ConsensusThreshold {
+		if ratio >= globalConfig.GetConfig().ConsensusThreshold {
 			ratioMap[key] = ratio
 		} else {
 			ratioMap[key] = 0
@@ -913,7 +913,7 @@ func findServersInConsensusHeightRange(servers *Servers, mostCommonHeightsRanges
 			if heights, ok := mostCommonHeightsRanges[coin]; ok {
 				if slices.Contains(heights, coinObj.getBlockCount) {
 					// Only include servers for coins that have reached consensus.
-					if ratioMap[coin] >= config.ConsensusThreshold {
+					if ratioMap[coin] >= globalConfig.GetConfig().ConsensusThreshold {
 						commonHeightServers[coin] = append(commonHeightServers[coin], server.id)
 					}
 				}
@@ -926,6 +926,8 @@ func findServersInConsensusHeightRange(servers *Servers, mostCommonHeightsRanges
 // computeMostCommonHeightRanges calculates the most frequently occurring range of block heights
 // for each coin across all servers. A small tolerance is allowed to account for minor discrepancies.
 func computeMostCommonHeightRanges(heightsMap map[string][]int) map[string][]int {
+	tolerance := BlockHashToleranceRange
+
 	mostCommonRanges := make(map[string][]int)
 	for coinStr, heights := range heightsMap {
 		sort.Ints(heights)
@@ -937,8 +939,8 @@ func computeMostCommonHeightRanges(heightsMap map[string][]int) map[string][]int
 		var mostCommonCount int
 		for _, height := range heights {
 			// Define a tolerance range around the current height.
-			rangeStart := height - BlockHashToleranceRange
-			rangeEnd := height + BlockHashToleranceRange
+			rangeStart := height - tolerance
+			rangeEnd := height + tolerance
 			rangeCount := countRangeValues(counts, rangeStart, rangeEnd)
 			if rangeCount > mostCommonCount || (rangeCount == mostCommonCount && height > mostCommonRange[len(mostCommonRange)-1]) {
 				mostCommonRange = getValuesInRange(heights, rangeStart, rangeEnd)

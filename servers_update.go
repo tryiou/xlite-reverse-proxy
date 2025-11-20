@@ -141,7 +141,8 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 	validServerConfigs = append(validServerConfigs, ServerConfig{URL: providerURL, EXR: true})
 
 	readyCount, notReadyCount := 0, 0
-	requiredPlugins := config.AcceptedMethods
+	cfg := globalConfig.GetConfig()
+	requiredPlugins := cfg.AcceptedMethods
 
 	for i, serverInfo := range remoteServers {
 		serverID := i + 1
@@ -175,7 +176,7 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 // set of server configurations. It adds new servers, updates existing ones,
 // and removes any that are no longer in the provided configuration.
 func UpdateServersFromJSON(servers *Servers) {
-	serverConfigs := config.ServersMap
+	serverConfigs := globalConfig.GetConfig().ServersMap
 
 	logger.Printf("|SERVERS_UPDATE| Syncing server list with %d configurations.", len(serverConfigs))
 
@@ -228,7 +229,8 @@ func UpdateServersFromJSON(servers *Servers) {
 // fetches and filters servers, and updates the global server configuration.
 // It stops after the first provider that returns a valid list of servers.
 func updateServersFromProviders(servers *Servers) {
-	for _, providerURL := range config.DynlistServersProviders {
+	cfg := globalConfig.GetConfig()
+	for _, providerURL := range cfg.DynlistServersProviders {
 		serverConfigs, err := fetchAndFilterRemoteServers(providerURL)
 		if err != nil {
 			logger.Printf("|SERVERS_UPDATE| Failed to get servers from provider %s: %v", providerURL, err)
@@ -240,10 +242,11 @@ func updateServersFromProviders(servers *Servers) {
 			continue
 		}
 
-		// Update config with mutex protection to prevent race conditions
-		locks.config.Lock()
-		config.ServersMap = serverConfigs
-		locks.config.Unlock()
+		// Update config via config manager
+		if err := globalConfig.UpdateServerList(serverConfigs); err != nil {
+			logger.Printf("|SERVERS_UPDATE| Failed to update server list in config manager: %v", err)
+			continue
+		}
 		UpdateServersFromJSON(servers)
 
 		// Successfully updated from a provider, so we can stop.

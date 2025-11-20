@@ -30,9 +30,11 @@ func getVisitor(ip string) *rate.Limiter {
 	locks.rateLimit.Lock()
 	defer locks.rateLimit.Unlock()
 
+	cfg := globalConfig.GetConfig()
+
 	v, exists := visitors[ip]
 	if !exists {
-		limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(config.RateLimit)), config.RateLimit)
+		limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(cfg.RateLimit)), cfg.RateLimit)
 		// Include the current time when creating a new visitor.
 		visitors[ip] = &visitor{limiter, time.Now()}
 		return limiter
