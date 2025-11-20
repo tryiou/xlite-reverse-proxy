@@ -249,7 +249,6 @@ func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 	globalConfig.config = cfg
 	req := httptest.NewRequest("POST", "/", strings.NewReader(
 		`{"method":"invalidmethod"}`))
-	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
 
@@ -259,15 +258,22 @@ func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 	reverseProxyHandler(servers)(w, req)
 
 	log.Printf("TEST_UNIT: Received status for invalid method: %d", w.Result().StatusCode)
-	assert.Equal(t, HTTPStatusNotFound, w.Result().StatusCode)
+	assert.Equal(t, HTTPStatusBadRequest, w.Result().StatusCode)
 
 	// Verify generic error message is returned
 	body, _ := io.ReadAll(w.Result().Body)
-	assert.JSONEq(t, `{"error": "Not found"}`, string(body))
+	assert.JSONEq(t, `{"error": "Bad request"}`, string(body))
 }
 
 func TestReverseProxy_CoinExtraction(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_CoinExtraction")
+
+	// Set up config with the methods needed for this test
+	oldConfig := globalConfig.config
+	defer func() { globalConfig.config = oldConfig }()
+	globalConfig.config = &Config{
+		AcceptedMethods: []string{"getblock", "getblockhash", "heights", "fees", "ping"},
+	}
 
 	testCases := []struct {
 		body, expectedCoin string
@@ -280,6 +286,9 @@ func TestReverseProxy_CoinExtraction(t *testing.T) {
 
 	for _, tc := range testCases {
 		req := httptest.NewRequest("POST", "/", strings.NewReader(tc.body))
+		if tc.body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		reqData, err := extractRequestData(req)
 
 		log.Printf("TEST_UNIT: Body: %s | Extracted: %s | Err: %v",

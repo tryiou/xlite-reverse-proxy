@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/valyala/fastjson"
@@ -37,6 +38,15 @@ func (s *Server) setDefaultResponses() {
 	s.getheights = getDefaultJSONResponse()
 }
 
+// Add atomic helper methods
+func (s *Server) setPing(value int) {
+	atomic.StoreInt64(&s.ping, int64(value))
+}
+
+func (s *Server) getPing() int {
+	return int(atomic.LoadInt64(&s.ping))
+}
+
 func (s *Server) server_GetPing() error {
 	payloadMethod := "ping"
 	payloadParams := []interface{}{}
@@ -45,25 +55,26 @@ func (s *Server) server_GetPing() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, 5)
 	if err != nil {
 		s.setDefaultResponses()
-		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessagePingFailed, err)
+		return NewServerError(s.id, "ping", err)
 	}
 
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.setDefaultResponses()
-		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
+		return NewServerError(s.id, "parse JSON", err)
 	}
 
 	result := jsonResp.Get("result")
 	if result == nil {
+		s.setPing(PingFailureValue)
 		s.setDefaultResponses()
-		return fmt.Errorf("server[%d] %s", s.id, ErrorMessageMissingResult)
+		return NewServerError(s.id, "ping", fmt.Errorf("missing result field"))
 	}
 
 	if result.Type() == fastjson.TypeNumber && result.GetInt() == PingSuccessValue {
-		s.ping = PingSuccessValue
+		s.setPing(PingSuccessValue)
 	} else {
-		s.ping = PingFailureValue
+		s.setPing(PingFailureValue)
 		logServerError(s.id, "ping", fmt.Errorf("returned non-success value: %d", result.GetInt()))
 	}
 	return nil
@@ -75,27 +86,27 @@ func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value
 
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
-		logServerError(s.id, ErrorMessageGetBlockFailed, err)
-		return nil, fmt.Errorf("server[%d] %s for coin %s: %w", s.id, ErrorMessageGetBlockFailed, coin, err)
+		logServerError(s.id, "getblock failed", err)
+		return nil, NewServerError(s.id, "getblock", fmt.Errorf("coin %s: %w", coin, err))
 	}
 
 	jsonResp, err := parseJSON(response)
 	if err != nil {
-		logServerError(s.id, ErrorMessageJSONParseFailed, err)
-		return nil, fmt.Errorf("server[%d] %s for coin %s: %w", s.id, ErrorMessageJSONParseFailed, coin, err)
+		logServerError(s.id, "JSON parse failed", err)
+		return nil, NewServerError(s.id, "parse JSON", fmt.Errorf("coin %s: %w", coin, err))
 	}
 
 	jsonError := jsonResp.Get("error")
 	if jsonError.Type() != fastjson.TypeNull {
 		errorMsg := jsonError.String()
-		logServerError(s.id, ErrorMessageGetBlockFailed, fmt.Errorf("coin %s: %s", coin, errorMsg))
-		return nil, fmt.Errorf("server[%d] %s for coin %s: %s", s.id, ErrorMessageGetBlockFailed, coin, errorMsg)
+		logServerError(s.id, "getblock failed", fmt.Errorf("coin %s: %s", coin, errorMsg))
+		return nil, NewServerError(s.id, "getblock", fmt.Errorf("coin %s: %s", coin, errorMsg))
 	}
 
 	jsonResult := jsonResp.Get("result")
 	if jsonResult.Type() != fastjson.TypeObject {
-		logServerError(s.id, ErrorMessageGetBlockFailed, fmt.Errorf("coin %s: invalid result type", coin))
-		return nil, fmt.Errorf("server[%d] %s for coin %s: invalid result type", s.id, ErrorMessageGetBlockFailed, coin)
+		logServerError(s.id, "getblock failed", fmt.Errorf("coin %s: invalid result type", coin))
+		return nil, NewServerError(s.id, "getblock", fmt.Errorf("coin %s: invalid result type", coin))
 	}
 
 	// logServerSuccess(s.id, "getblock", fmt.Sprintf("coin %s, hash %s", coin, blockHash))
@@ -107,33 +118,33 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 	payloadParams := []interface{}{coin, height}
 
 	if height == InvalidHeightValue {
-		logServerError(s.id, ErrorMessageBlockHashFailed, fmt.Errorf("invalid height %d for coin %s", height, coin))
+		logServerError(s.id, "getblockhash failed", fmt.Errorf("invalid height %d", height))
 		return "", nil
 	}
 
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
-		logServerError(s.id, ErrorMessageBlockHashFailed, err)
-		return "", fmt.Errorf("server[%d] %s for coin %s height %d: %w", s.id, ErrorMessageBlockHashFailed, coin, height, err)
+		logServerError(s.id, "getblockhash failed", err)
+		return "", NewServerError(s.id, "getblockhash", fmt.Errorf("coin %s height %d: %w", coin, height, err))
 	}
 
 	jsonResp, err := parseJSON(response)
 	if err != nil {
-		logServerError(s.id, ErrorMessageJSONParseFailed, err)
-		return "", fmt.Errorf("server[%d] %s for coin %s height %d: %w", s.id, ErrorMessageJSONParseFailed, coin, height, err)
+		logServerError(s.id, "JSON parse failed", err)
+		return "", NewServerError(s.id, "parse JSON", fmt.Errorf("coin %s height %d: %w", coin, height, err))
 	}
 
 	jsonError := jsonResp.Get("error")
 	if jsonError.Type() != fastjson.TypeNull {
 		errorMsg := jsonError.String()
-		logServerError(s.id, ErrorMessageBlockHashFailed, fmt.Errorf("coin %s height %d: %s", coin, height, errorMsg))
-		return "", fmt.Errorf("server[%d] %s for coin %s height %d: %s", s.id, ErrorMessageBlockHashFailed, coin, height, errorMsg)
+		logServerError(s.id, "getblockhash failed", fmt.Errorf("coin %s height %d: %s", coin, height, errorMsg))
+		return "", NewServerError(s.id, "getblockhash", fmt.Errorf("coin %s height %d: %s", coin, height, errorMsg))
 	}
 
 	result := jsonResp.Get("result").String()
 	if result == "" {
-		logServerError(s.id, ErrorMessageBlockHashFailed, fmt.Errorf("coin %s height %d: empty result", coin, height))
-		return "", fmt.Errorf("server[%d] %s for coin %s height %d: empty result", s.id, ErrorMessageBlockHashFailed, coin, height)
+		logServerError(s.id, "getblockhash failed", fmt.Errorf("coin %s height %d: empty result", coin, height))
+		return "", NewServerError(s.id, "getblockhash", fmt.Errorf("coin %s height %d: empty result", coin, height))
 	}
 
 	hash := removeNonPrintableChars(result)
@@ -147,14 +158,14 @@ func (s *Server) server_GetFees() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
-		logServerError(s.id, ErrorMessageGetFeesFailed, err)
-		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageGetFeesFailed, err)
+		logServerError(s.id, "getfees failed", err)
+		return NewServerError(s.id, "getfees", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
-		logServerError(s.id, ErrorMessageJSONParseFailed, err)
-		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
+		logServerError(s.id, "JSON parse failed", err)
+		return NewServerError(s.id, "parse JSON", err)
 	}
 	s.getfees = jsonResp
 	// logServerSuccess(s.id, "getfees")
@@ -181,14 +192,14 @@ func (s *Server) server_GetHeights() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
-		logServerError(s.id, ErrorMessageGetHeightsFailed, err)
-		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageGetHeightsFailed, err)
+		logServerError(s.id, "getheights failed", err)
+		return NewServerError(s.id, "getheights", err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
-		logServerError(s.id, ErrorMessageJSONParseFailed, err)
-		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
+		logServerError(s.id, "JSON parse failed", err)
+		return NewServerError(s.id, "parse JSON", err)
 	}
 	s.getheights = jsonResp
 	s.sortGetHeightsKeys()
@@ -229,7 +240,8 @@ func (s *Server) sortGetHeightsKeys() {
 	}
 }
 
-func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams []interface{}, timeoutSeconds ...int) ([]byte, error) {
+// Add context support to HTTP requests
+func (s *Server) makeHTTPRequestWithContext(ctx context.Context, httpMethod, payloadMethod string, payloadParams []interface{}, timeoutSeconds ...int) ([]byte, error) {
 	var (
 		url     string
 		payload string
@@ -245,7 +257,7 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 
 	// Validate server configuration
 	if s.url == "" {
-		return nil, fmt.Errorf("server %d has empty URL", s.id)
+		return nil, NewServerError(s.id, "validate server config", fmt.Errorf("empty URL"))
 	}
 
 	if !s.exr {
@@ -260,7 +272,7 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 		}
 		payloadBytes, err := json.Marshal(payloadData)
 		if err != nil {
-			return nil, fmt.Errorf("server[%d] failed to marshal payloadData to JSON for method %s: %w", s.id, payloadMethod, err)
+			return nil, NewServerError(s.id, "marshal payload", fmt.Errorf("method %s: %w", payloadMethod, err))
 		}
 		payload = string(payloadBytes)
 	} else {
@@ -268,7 +280,7 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 		url = s.url + "/xrs/" + payloadMethod
 		payloadBytes, err := json.Marshal(payloadParams)
 		if err != nil {
-			return nil, fmt.Errorf("server[%d] failed to marshal payloadParams to JSON for EXR method %s: %w", s.id, payloadMethod, err)
+			return nil, NewServerError(s.id, "marshal payload", fmt.Errorf("EXR method %s: %w", payloadMethod, err))
 		}
 		payload = string(payloadBytes)
 	}
@@ -277,21 +289,23 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 
 	// Validate URL format
 	if !strings.Contains(url, "://") {
-		return nil, fmt.Errorf("server[%d] invalid URL format: %s", s.id, url)
+		return nil, NewServerError(s.id, "validate URL", fmt.Errorf("invalid URL format: %s", url))
 	}
 
-	req, err := http.NewRequest(httpMethod, url, strings.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, httpMethod, url, strings.NewReader(payload))
 	if err != nil {
 		elapsed := time.Since(reqTimer)
-		return nil, fmt.Errorf("server[%d] failed to create HTTP request for %s: %w (elapsed: %v)", s.id, url, err, elapsed)
+		return nil, NewServerError(s.id, "create HTTP request", fmt.Errorf("url: %s, elapsed: %v: %w", url, elapsed, err))
 	}
 
 	req.Header.Set(HeaderContentType, ContentTypeJSON)
 
 	// Use the determined timeout
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
-	req = req.WithContext(ctx)
+	if ctx == context.Background() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+	}
 
 	client := globalConfig.GetClient()
 	res, err := client.Do(req)
@@ -301,40 +315,42 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 		// Provide specific error messages based on error type
 		if netErr, ok := err.(net.Error); ok {
 			if netErr.Timeout() {
-				return nil, fmt.Errorf("server[%d] request timeout after %v for %s: %w", s.id, elapsed, url, err)
+				return nil, NewServerError(s.id, "HTTP request", fmt.Errorf("timeout after %v: %w", elapsed, err))
 			}
 			if netErr.Temporary() {
-				return nil, fmt.Errorf("server[%d] temporary network error for %s: %w", s.id, url, err)
+				return nil, NewServerError(s.id, "HTTP request", fmt.Errorf("temporary network error: %w", err))
 			}
 		}
 
 		// Handle connection-specific errors
 		if strings.Contains(err.Error(), "connection refused") {
-			return nil, fmt.Errorf("server[%d] connection refused for %s: %w", s.id, url, err)
+			return nil, NewServerError(s.id, "HTTP request", fmt.Errorf("connection refused: %w", err))
 		}
 		if strings.Contains(err.Error(), "no such host") {
-			return nil, fmt.Errorf("server[%d] DNS resolution failed for %s: %w", s.id, url, err)
-		}
-		if strings.Contains(err.Error(), "too many open files") {
-			return nil, fmt.Errorf("server[%d] system resource limit reached for %s: %w", s.id, url, err)
+			return nil, NewServerError(s.id, "HTTP request", fmt.Errorf("DNS resolution failed: %w", err))
 		}
 
-		return nil, fmt.Errorf("server[%d] failed to send HTTP request to %s: %w (elapsed: %v)", s.id, url, err, elapsed)
+		return nil, NewServerError(s.id, "HTTP request", err)
 	}
 	defer res.Body.Close()
 
 	// Check HTTP status code
 	if res.StatusCode != HTTPStatusOK {
 		elapsed := time.Since(reqTimer)
-		return nil, fmt.Errorf("server[%d] HTTP %d %s for %s (elapsed: %v)", s.id, res.StatusCode, res.Status, url, elapsed)
+		return nil, NewHTTPError(res.StatusCode, "HTTP response", fmt.Errorf("status: %s, elapsed: %v", res.Status, elapsed))
 	}
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("server[%d] failed to read HTTP response body from %s: %w", s.id, url, err)
+		return nil, NewServerError(s.id, "read response body", err)
 	}
 
 	// elapsed := time.Since(reqTimer)
 	// logger.Printf(LogPrefixServer+" server[%d] HTTP request to %s successful (%v, %d bytes)", s.id, s.id, url, elapsed, len(body))
 	return body, nil
+}
+
+func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams []interface{}, timeoutSeconds ...int) ([]byte, error) {
+	ctx := context.Background()
+	return s.makeHTTPRequestWithContext(ctx, httpMethod, payloadMethod, payloadParams, timeoutSeconds...)
 }

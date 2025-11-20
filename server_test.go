@@ -283,7 +283,7 @@ func TestServerGetFeesErrorLogging(t *testing.T) {
 	}
 
 	// Verify error message contains server ID correctly
-	expected := "server[6] getfees failed"
+	expected := "server[6] getfees:"
 	if !strings.Contains(err.Error(), expected) {
 		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
 	}
@@ -319,7 +319,7 @@ func TestServerGetHeightsErrorLogging(t *testing.T) {
 	}
 
 	// Verify error message contains server ID correctly
-	expected := "server[7] getheights failed"
+	expected := "server[7] getheights:"
 	if !strings.Contains(err.Error(), expected) {
 		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
 	}
@@ -355,7 +355,7 @@ func TestServerGetBlockHashErrorLogging(t *testing.T) {
 	}
 
 	// Verify error message contains server ID correctly
-	expected := "server[8] getblockhash failed"
+	expected := "server[8] getblockhash:"
 	if !strings.Contains(err.Error(), expected) {
 		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
 	}
@@ -391,7 +391,7 @@ func TestServerGetBlockErrorLogging(t *testing.T) {
 	}
 
 	// Verify error message contains server ID correctly
-	expected := "server[9] getblock failed"
+	expected := "server[9] getblock:"
 	if !strings.Contains(err.Error(), expected) {
 		t.Errorf("Expected error message to contain '%s', got: %v", expected, err)
 	}

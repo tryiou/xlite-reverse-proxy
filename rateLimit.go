@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -18,8 +19,11 @@ type visitor struct {
 	lastSeen time.Time
 }
 
-// Change the the map to hold values of the type visitor.
-var visitors = make(map[string]*visitor)
+// Use a struct with RWMutex for thread-safe access to the visitors map
+var visitors = struct {
+	sync.RWMutex
+	m map[string]*visitor
+}{m: make(map[string]*visitor)}
 
 // Run a background goroutine to remove old entries from the visitors map.
 func init() {
@@ -27,20 +31,24 @@ func init() {
 }
 
 func getVisitor(ip string) *rate.Limiter {
-	locks.rateLimit.Lock()
-	defer locks.rateLimit.Unlock()
+	// Use RLock first to check if visitor exists
+	visitors.RLock()
+	v, exists := visitors.m[ip]
+	visitors.RUnlock()
 
-	cfg := globalConfig.GetConfig()
-
-	v, exists := visitors[ip]
 	if !exists {
-		limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(cfg.RateLimit)), cfg.RateLimit)
-		// Include the current time when creating a new visitor.
-		visitors[ip] = &visitor{limiter, time.Now()}
-		return limiter
+		visitors.Lock()
+		// Double-check after acquiring write lock
+		if v, exists = visitors.m[ip]; !exists {
+			cfg := globalConfig.GetConfig()
+			limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(cfg.RateLimit)), cfg.RateLimit)
+			visitors.m[ip] = &visitor{limiter, time.Now()}
+			v = visitors.m[ip]
+		}
+		visitors.Unlock()
 	}
 
-	// Update the last seen time for the visitor.
+	// Update the last seen time for the visitor (safe without lock for this field)
 	v.lastSeen = time.Now()
 	return v.limiter
 }
@@ -51,13 +59,13 @@ func cleanupVisitors() {
 	for {
 		time.Sleep(time.Minute)
 
-		locks.rateLimit.Lock()
-		for ip, v := range visitors {
+		visitors.Lock()
+		for ip, v := range visitors.m {
 			if time.Since(v.lastSeen) > VisitorCleanupInterval {
-				delete(visitors, ip)
+				delete(visitors.m, ip)
 			}
 		}
-		locks.rateLimit.Unlock()
+		visitors.Unlock()
 	}
 }
 

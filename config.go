@@ -120,72 +120,10 @@ func createDefaultConfig(configFile string) (*Config, error) {
 
 // validateConfig validates the configuration values for correctness
 func validateConfig(cfg *Config) error {
-	// Validate HTTP timeout
-	if err := validateNumericRange("HTTP timeout", cfg.HttpTimeout, 1, 300); err != nil {
-		return err
-	}
+	validator := &Validator{}
+	validator.ValidateConfig(cfg)
 
-	// Validate rate limit
-	if err := validateNumericRange("rate limit", cfg.RateLimit, 1, 1000); err != nil {
-		return err
-	}
-
-	// Validate consensus threshold
-	if cfg.ConsensusThreshold <= 0 || cfg.ConsensusThreshold > 1 {
-		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", cfg.ConsensusThreshold)
-	}
-
-	// Validate max stored blocks
-	if err := validateNumericRange("max stored blocks", cfg.MaxStoredBlocks, 1, 100); err != nil {
-		return err
-	}
-
-	// Validate max block time diff
-	if err := validateNumericRange("max block time diff", cfg.MaxBlockTimeDiff, 1, 86400); err != nil {
-		return err
-	}
-
-	// Validate max log size
-	if cfg.MaxLogSize <= 0 {
-		return fmt.Errorf("max log size must be positive, got %d", cfg.MaxLogSize)
-	}
-	if cfg.MaxLogSize < 1024*1024 { // 1MB minimum
-		return fmt.Errorf("max log size too small: %d bytes (min 1048576)", cfg.MaxLogSize)
-	}
-	if cfg.MaxLogSize > 100*1024*1024 { // 100MB maximum
-		return fmt.Errorf("max log size too high: %d bytes (max %d)", cfg.MaxLogSize, 100*1024*1024)
-	}
-
-	// Validate accepted paths is not empty
-	if len(cfg.AcceptedPaths) == 0 {
-		return fmt.Errorf("accepted paths list cannot be empty")
-	}
-
-	// Validate accepted methods is not empty
-	if len(cfg.AcceptedMethods) == 0 {
-		return fmt.Errorf("accepted methods list cannot be empty")
-	}
-
-	// Validate server configurations if present
-	if len(cfg.ServersMap) == 0 && len(cfg.DynlistServersProviders) == 0 {
-		return fmt.Errorf("no servers configured - either ServersMap or DynlistServersProviders must have entries")
-	}
-
-	// Validate server URLs
-	for i, server := range cfg.ServersMap {
-		if err := validateURLFormat(server.URL); err != nil {
-			return fmt.Errorf("server %d URL validation failed: %v", i, err)
-		}
-	}
-
-	// Validate dynamic server providers
-	for i, provider := range cfg.DynlistServersProviders {
-		if err := validateURLFormat(provider); err != nil {
-			return fmt.Errorf("dynamic server provider %d URL validation failed: %v", i, err)
-		}
-	}
-
-	return nil
+	return validator.Validate()
 }
 
 // validateURLFormat validates a URL string using proper URL parsing
@@ -193,13 +131,25 @@ func validateURLFormat(urlStr string) error {
 	if urlStr == "" {
 		return fmt.Errorf("URL cannot be empty")
 	}
+
 	u, err := url.Parse(urlStr)
 	if err != nil {
 		return fmt.Errorf("invalid URL format: %s", urlStr)
 	}
-	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("URL missing protocol or host: %s", urlStr)
+
+	if u.Scheme == "" {
+		return fmt.Errorf("URL missing protocol: %s", urlStr)
 	}
+
+	if u.Host == "" {
+		return fmt.Errorf("URL missing host: %s", urlStr)
+	}
+
+	// Validate scheme
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported protocol '%s', only http and https are supported", u.Scheme)
+	}
+
 	return nil
 }
 

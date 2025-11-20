@@ -43,6 +43,45 @@ func writeErrorResponse(w http.ResponseWriter, status int, message string, detai
 	_ = WriteJSONResponse(w, response)
 }
 
+// Add request context to error responses
+type RequestContext struct {
+	IP        string
+	Method    string
+	Path      string
+	Timestamp time.Time
+	UserAgent string
+}
+
+func createRequestContext(r *http.Request) RequestContext {
+	ip := extractIPFromRequest(r)
+	return RequestContext{
+		IP:        ip,
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		Timestamp: time.Now(),
+		UserAgent: r.Header.Get("User-Agent"),
+	}
+}
+
+func extractIPFromRequest(r *http.Request) string {
+	reqClientIP := r.Header.Get("X-Forwarded-For")
+	if reqClientIP != "" {
+		ips := strings.Split(reqClientIP, ",")
+		return strings.TrimSpace(ips[0])
+	}
+
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return "unknown"
+	}
+	return ip
+}
+
+func logErrorWithContext(ctx RequestContext, operation string, err error) {
+	logger.Printf(LogPrefixError+" [IP:%s Method:%s Path:%s UA:%s] %s: %v",
+		ctx.IP, ctx.Method, ctx.Path, ctx.UserAgent, operation, err)
+}
+
 // writeGenericErrorResponse writes a generic error response to the client while logging detailed error internally
 func writeGenericErrorResponse(w http.ResponseWriter, status int, genericMsg string, operation string, err error) {
 	logger.Printf(LogPrefixError+" %s: %v", operation, err)
@@ -58,7 +97,10 @@ func writeServerErrorResponse(w http.ResponseWriter, operation string, err error
 
 // writeBadRequestResponse writes a bad request error response
 func writeBadRequestResponse(w http.ResponseWriter, operation string, err error) {
-	writeGenericErrorResponse(w, HTTPStatusBadRequest, ErrorMessageBadRequest, operation, err)
+	logger.Printf(LogPrefixError+" %s: %v", operation, err)
+	w.WriteHeader(HTTPStatusBadRequest)
+	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, ErrorMessageBadRequest))
+	_ = WriteJSONResponse(w, response)
 }
 
 // writeNotFoundResponse writes a not found error response
@@ -85,15 +127,15 @@ func writeResponseChecked(w http.ResponseWriter, resp *fastjson.Value) error {
 // reverseProxy starts a reverse proxy server on the specified port.
 func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		requestData, err := extractRequestData(req)
-		if err != nil {
-			writeBadRequestResponse(rw, "extractRequestData", err)
+		// Check if the request path is in the acceptedPaths list first
+		if !isPathAccepted(req.URL.Path) {
+			writeNotFoundResponse(rw)
 			return
 		}
 
-		// Check if the request path is in the acceptedPaths list
-		if !isPathAccepted(req.URL.Path) {
-			writeNotFoundResponse(rw)
+		requestData, err := extractRequestData(req)
+		if err != nil {
+			writeBadRequestResponse(rw, "extractRequestData", err)
 			return
 		}
 
@@ -337,23 +379,97 @@ func decompressResponseBody(response *http.Response) ([]byte, error) {
 
 // extractRequestData extracts the method, parameters, and client IP from the request.
 func extractRequestData(req *http.Request) (RequestData, error) {
+	// Validate HTTP request first
+	validator := &Validator{}
+	validator.ValidateHTTPRequest(req)
+
+	if validator.HasErrors() {
+		return RequestData{}, validator.Validate()
+	}
+
 	buf, err := io.ReadAll(req.Body)
 	if err != nil {
 		return RequestData{}, fmt.Errorf("failed to read request body: %w", err)
 	}
 
-	rdr1 := io.NopCloser(bytes.NewBuffer(buf))
-	rdr2 := io.NopCloser(bytes.NewBuffer(buf))
-	requestData, err := extractMethodParamsIp(rdr1, req)
+	var requestData RequestData
 
-	if err != nil {
-		return RequestData{}, fmt.Errorf("failed to extract method and params: %w", err)
+	switch req.Method {
+	case http.MethodGet:
+		// For GET requests, extract method from path
+		requestData.Method = strings.TrimPrefix(req.URL.Path, "/")
+		requestData.Params = []interface{}{}
+		requestData.Path = req.URL.Path
+
+		// Extract and validate IP for GET requests
+		ip, err := extractAndValidateIP(req)
+		if err != nil {
+			return RequestData{}, err
+		}
+		requestData.Ip = ip
+
+	case http.MethodPost:
+		if err := json.Unmarshal(buf, &requestData); err != nil {
+			return RequestData{}, fmt.Errorf("failed to parse request JSON: %w", err)
+		}
+		requestData.Path = req.URL.Path
+
+		// Extract and validate IP for POST requests
+		ip, err := extractAndValidateIP(req)
+		if err != nil {
+			return RequestData{}, err
+		}
+		requestData.Ip = ip
+
+		// Validate request data for POST requests
+		validator = &Validator{}
+		validator.ValidateRequestData(requestData)
+
+		if validator.HasErrors() {
+			return RequestData{}, validator.Validate()
+		}
 	}
-	req.Body = rdr2
+
 	return requestData, nil
 }
 
+// isCachedEndpoint checks if the path is a cached endpoint that doesn't need full validation
+func isCachedEndpoint(path string) bool {
+	cachedEndpoints := []string{"/servers", "/heights", "/fees", "/ping"}
+	for _, endpoint := range cachedEndpoints {
+		if path == endpoint {
+			return true
+		}
+	}
+	return false
+}
+
+// extractAndValidateIP extracts and validates the client IP from the request.
+func extractAndValidateIP(req *http.Request) (string, error) {
+	var ip string
+	reqClientIP := req.Header.Get(HeaderXForwardedFor)
+
+	if reqClientIP != "" {
+		ips := strings.Split(reqClientIP, ",")
+		ip = strings.TrimSpace(ips[0])
+	} else {
+		var err error
+		ip, _, err = net.SplitHostPort(req.RemoteAddr)
+		if err != nil {
+			return "", fmt.Errorf("failed to extract client IP: %w", err)
+		}
+	}
+
+	// Validate the extracted IP
+	if net.ParseIP(ip) == nil {
+		return "", fmt.Errorf("invalid client IP address: %s", ip)
+	}
+
+	return ip, nil
+}
+
 // extractMethodParamsIp extracts the method, parameters, and client IP from the request.
+// This function is kept for backward compatibility but now delegated to extractRequestData.
 func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error) {
 	var requestData RequestData
 	var ip string

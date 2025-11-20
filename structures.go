@@ -19,7 +19,7 @@ type Server struct {
 	id            int
 	url           string
 	exr           bool
-	ping          int // 1 = on
+	ping          int64 // Change to int64 for atomic operations
 	getfees       *fastjson.Value
 	getheights    *fastjson.Value
 	coinsMap      map[string]Coin
@@ -87,9 +87,10 @@ type JsonResponse struct {
 type LockManager struct {
 	servers   sync.RWMutex // Protects servers.Slice and server data
 	consensus sync.RWMutex // Protects GlobalHeights, GlobalFees, GlobalCoinServerIDs
-	rateLimit sync.Mutex   // Protects visitors map in rateLimit.go
+	rateLimit sync.RWMutex // Change from sync.Mutex for better concurrency
 	config    sync.RWMutex // Protects config updates
 	urlToID   sync.RWMutex // Protects servers.urlToID map
+	visitors  sync.RWMutex // Add dedicated visitor lock (for future enhancements)
 }
 
 var locks = &LockManager{}
