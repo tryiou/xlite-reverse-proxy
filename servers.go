@@ -453,7 +453,7 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 
 			err := server.server_GetPing()
 			if err != nil {
-				logger.Printf(LogPrefixServerError+"   : %v", server.id, err)
+				logServerError(server.id, "ping", err)
 			}
 			if server.ping == 1 {
 				startTimer := time.Now()

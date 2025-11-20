@@ -44,31 +44,27 @@ func (s *Server) server_GetPing() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.setDefaultResponses()
-		// Log the server communication error with more context
-		// logger.Printf(LogPrefixServerError+" server[%d] ping failed: %v", s.id, s.id, err)
-		return fmt.Errorf("server[%d] ping request failed: %w", s.id, err)
+		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessagePingFailed, err)
 	}
 
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.setDefaultResponses()
-		logger.Printf(LogPrefixServerError+" ping JSON parse failed: %v", s.id, err)
-		return fmt.Errorf("server[%d] ping JSON parse failed: %w", s.id, err)
+		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
 	}
 
 	result := jsonResp.Get("result")
 	if result == nil {
 		s.setDefaultResponses()
-		logger.Printf(LogPrefixServerError+" ping missing result field", s.id)
-		return fmt.Errorf("server[%d] ping response missing 'result' field", s.id)
+		return fmt.Errorf("server[%d] %s", s.id, ErrorMessageMissingResult)
 	}
 
 	if result.Type() == fastjson.TypeNumber && result.GetInt() == PingSuccessValue {
 		s.ping = PingSuccessValue
-		// logger.Printf(LogPrefixServer+" server[%d] ping successful", s.id, s.id)
+		// logServerSuccess(s.id, "ping")
 	} else {
 		s.ping = PingFailureValue
-		logger.Printf(LogPrefixServerError+" ping returned non-success value: %d", s.id, result.GetInt())
+		logServerError(s.id, "ping", fmt.Errorf("returned non-success value: %d", result.GetInt()))
 	}
 	return nil
 }
@@ -79,30 +75,30 @@ func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value
 
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
-		logger.Printf(LogPrefixServerError+" getblock failed for coin %s, hash %s: %v", s.id, coin, blockHash, err)
-		return nil, fmt.Errorf("server[%d] getblock request failed for coin %s: %w", s.id, coin, err)
+		logServerError(s.id, ErrorMessageGetBlockFailed, err)
+		return nil, fmt.Errorf("server[%d] %s for coin %s: %w", s.id, ErrorMessageGetBlockFailed, coin, err)
 	}
 
 	jsonResp, err := parseJSON(response)
 	if err != nil {
-		logger.Printf(LogPrefixServerError+" getblock JSON parse failed for coin %s: %v", s.id, coin, err)
-		return nil, fmt.Errorf("server[%d] getblock JSON parse failed for coin %s: %w", s.id, coin, err)
+		logServerError(s.id, ErrorMessageJSONParseFailed, err)
+		return nil, fmt.Errorf("server[%d] %s for coin %s: %w", s.id, ErrorMessageJSONParseFailed, coin, err)
 	}
 
 	jsonError := jsonResp.Get("error")
 	if jsonError.Type() != fastjson.TypeNull {
 		errorMsg := jsonError.String()
-		logger.Printf(LogPrefixServerError+" getblock error for coin %s: %s", s.id, coin, errorMsg)
-		return nil, fmt.Errorf("server[%d] getblock error for coin %s: %s", s.id, coin, errorMsg)
+		logServerError(s.id, ErrorMessageGetBlockFailed, fmt.Errorf("coin %s: %s", coin, errorMsg))
+		return nil, fmt.Errorf("server[%d] %s for coin %s: %s", s.id, ErrorMessageGetBlockFailed, coin, errorMsg)
 	}
 
 	jsonResult := jsonResp.Get("result")
 	if jsonResult.Type() != fastjson.TypeObject {
-		logger.Printf(LogPrefixServerError+" getblock invalid result type for coin %s", s.id, coin)
-		return nil, fmt.Errorf("server[%d] getblock invalid result type for coin %s", s.id, coin)
+		logServerError(s.id, ErrorMessageGetBlockFailed, fmt.Errorf("coin %s: invalid result type", coin))
+		return nil, fmt.Errorf("server[%d] %s for coin %s: invalid result type", s.id, ErrorMessageGetBlockFailed, coin)
 	}
 
-	// Success logging removed - keep only error logging
+	// logServerSuccess(s.id, "getblock", fmt.Sprintf("coin %s, hash %s", coin, blockHash))
 	return jsonResult, nil
 }
 
@@ -111,37 +107,37 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 	payloadParams := []interface{}{coin, height}
 
 	if height == InvalidHeightValue {
-		logger.Printf(LogPrefixError+" server[%d] getblockhash called with invalid height %d for coin %s", s.id, height, coin)
+		logServerError(s.id, ErrorMessageBlockHashFailed, fmt.Errorf("invalid height %d for coin %s", height, coin))
 		return "", nil
 	}
 
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
-		logger.Printf(LogPrefixServerError+" getblockhash failed for coin %s, height %d: %v", s.id, coin, height, err)
-		return "", fmt.Errorf("server[%d] getblockhash request failed for coin %s height %d: %w", s.id, coin, height, err)
+		logServerError(s.id, ErrorMessageBlockHashFailed, err)
+		return "", fmt.Errorf("server[%d] %s for coin %s height %d: %w", s.id, ErrorMessageBlockHashFailed, coin, height, err)
 	}
 
 	jsonResp, err := parseJSON(response)
 	if err != nil {
-		logger.Printf(LogPrefixServerError+" getblockhash JSON parse failed for coin %s height %d: %v", s.id, coin, height, err)
-		return "", fmt.Errorf("server[%d] getblockhash JSON parse failed for coin %s height %d: %w", s.id, coin, height, err)
+		logServerError(s.id, ErrorMessageJSONParseFailed, err)
+		return "", fmt.Errorf("server[%d] %s for coin %s height %d: %w", s.id, ErrorMessageJSONParseFailed, coin, height, err)
 	}
 
 	jsonError := jsonResp.Get("error")
 	if jsonError.Type() != fastjson.TypeNull {
 		errorMsg := jsonError.String()
-		logger.Printf(LogPrefixServerError+" getblockhash error for coin %s height %d: %s", s.id, coin, height, errorMsg)
-		return "", fmt.Errorf("server[%d] getblockhash error for coin %s height %d: %s", s.id, coin, height, errorMsg)
+		logServerError(s.id, ErrorMessageBlockHashFailed, fmt.Errorf("coin %s height %d: %s", coin, height, errorMsg))
+		return "", fmt.Errorf("server[%d] %s for coin %s height %d: %s", s.id, ErrorMessageBlockHashFailed, coin, height, errorMsg)
 	}
 
 	result := jsonResp.Get("result").String()
 	if result == "" {
-		logger.Printf(LogPrefixServerError+" getblockhash empty result for coin %s height %d", s.id, coin, height)
-		return "", fmt.Errorf("server[%d] getblockhash empty result for coin %s height %d", s.id, coin, height)
+		logServerError(s.id, ErrorMessageBlockHashFailed, fmt.Errorf("coin %s height %d: empty result", coin, height))
+		return "", fmt.Errorf("server[%d] %s for coin %s height %d: empty result", s.id, ErrorMessageBlockHashFailed, coin, height)
 	}
 
 	hash := removeNonPrintableChars(result)
-	// logger.Printf(LogPrefixServer+" server[%d] getblockhash successful for coin %s height %d: %s", s.id, s.id, coin, height, hash)
+	// logServerSuccess(s.id, "getblockhash", fmt.Sprintf("coin %s height %d: %s", coin, height, hash))
 	return hash, nil
 }
 
@@ -151,14 +147,17 @@ func (s *Server) server_GetFees() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
-		return fmt.Errorf("failed to make HTTP request: %w", err)
+		logServerError(s.id, ErrorMessageGetFeesFailed, err)
+		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageGetFeesFailed, err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.getfees = getDefaultJSONResponse()
-		return fmt.Errorf("failed to parse JSON response: %w", err)
+		logServerError(s.id, ErrorMessageJSONParseFailed, err)
+		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
 	}
 	s.getfees = jsonResp
+	// logServerSuccess(s.id, "getfees")
 	return nil
 }
 
@@ -168,15 +167,18 @@ func (s *Server) server_GetHeights() error {
 	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
-		return fmt.Errorf("failed to make HTTP request: %w", err)
+		logServerError(s.id, ErrorMessageGetHeightsFailed, err)
+		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageGetHeightsFailed, err)
 	}
 	jsonResp, err := parseJSON(response)
 	if err != nil {
 		s.getheights = getDefaultJSONResponse()
-		return fmt.Errorf("failed to parse JSON response: %w", err)
+		logServerError(s.id, ErrorMessageJSONParseFailed, err)
+		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
 	}
 	s.getheights = jsonResp
 	s.sortGetHeightsKeys()
+	// logServerSuccess(s.id, "getheights")
 	return nil
 }
 

@@ -186,6 +186,22 @@ const (
 	// JSONNullValue is the null value for request data fallback
 	JSONNullValue = "null"
 
+	// Server error message constants
+	ErrorMessagePingFailed      = "ping request failed"
+	ErrorMessageJSONParseFailed = "JSON parse failed"
+	ErrorMessageMissingResult   = "response missing 'result' field"
+	ErrorMessageBlockHashFailed = "getblockhash failed"
+	ErrorMessageGetBlockFailed  = "getblock failed"
+	ErrorMessageGetFeesFailed   = "getfees failed"
+	ErrorMessageGetHeightsFailed = "getheights failed"
+
+	// Generic error message constants for client responses
+	ErrorMessageServiceUnavailable = "Service temporarily unavailable"
+	ErrorMessageInvalidRequest    = "Invalid request"
+	ErrorMessageRateLimitExceeded = "Rate limit exceeded"
+	ErrorMessageNotFound          = "Not found"
+	ErrorMessageBadRequest        = "Bad request"
+
 	// FilePermissionRWXRWXR is the file permission 0644 (owner: read/write/execute, group: read/write, other: read/write)
 	FilePermissionRWXRWXR = 0644
 

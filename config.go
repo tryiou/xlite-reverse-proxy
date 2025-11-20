@@ -121,19 +121,13 @@ func createDefaultConfig(configFile string) (*Config, error) {
 // validateConfig validates the configuration values for correctness
 func validateConfig(cfg *Config) error {
 	// Validate HTTP timeout
-	if cfg.HttpTimeout <= 0 {
-		return fmt.Errorf("HTTP timeout must be positive, got %d", cfg.HttpTimeout)
-	}
-	if cfg.HttpTimeout > 300 { // 5 minutes max
-		return fmt.Errorf("HTTP timeout too high: %d seconds (max 300)", cfg.HttpTimeout)
+	if err := validateNumericRange("HTTP timeout", cfg.HttpTimeout, 1, 300); err != nil {
+		return err
 	}
 
 	// Validate rate limit
-	if cfg.RateLimit <= 0 {
-		return fmt.Errorf("rate limit must be positive, got %d", cfg.RateLimit)
-	}
-	if cfg.RateLimit > 1000 {
-		return fmt.Errorf("rate limit too high: %d requests/minute (max 1000)", cfg.RateLimit)
+	if err := validateNumericRange("rate limit", cfg.RateLimit, 1, 1000); err != nil {
+		return err
 	}
 
 	// Validate consensus threshold
@@ -142,19 +136,13 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// Validate max stored blocks
-	if cfg.MaxStoredBlocks <= 0 {
-		return fmt.Errorf("max stored blocks must be positive, got %d", cfg.MaxStoredBlocks)
-	}
-	if cfg.MaxStoredBlocks > 100 {
-		return fmt.Errorf("max stored blocks too high: %d (max 100)", cfg.MaxStoredBlocks)
+	if err := validateNumericRange("max stored blocks", cfg.MaxStoredBlocks, 1, 100); err != nil {
+		return err
 	}
 
 	// Validate max block time diff
-	if cfg.MaxBlockTimeDiff <= 0 {
-		return fmt.Errorf("max block time diff must be positive, got %d", cfg.MaxBlockTimeDiff)
-	}
-	if cfg.MaxBlockTimeDiff > 86400 { // 24 hours max
-		return fmt.Errorf("max block time diff too high: %d seconds (max 86400)", cfg.MaxBlockTimeDiff)
+	if err := validateNumericRange("max block time diff", cfg.MaxBlockTimeDiff, 1, 86400); err != nil {
+		return err
 	}
 
 	// Validate max log size
@@ -211,6 +199,17 @@ func validateURLFormat(urlStr string) error {
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("URL missing protocol or host: %s", urlStr)
+	}
+	return nil
+}
+
+// validateNumericRange validates that a numeric value is within the specified range
+func validateNumericRange(name string, value, min, max int) error {
+	if value < min {
+		return fmt.Errorf("%s too small: %d (minimum %d)", name, value, min)
+	}
+	if value > max {
+		return fmt.Errorf("%s too large: %d (maximum %d)", name, value, max)
 	}
 	return nil
 }

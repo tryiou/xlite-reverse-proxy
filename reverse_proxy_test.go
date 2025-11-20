@@ -57,6 +57,46 @@ func TestReverseProxy_CachedEndpoints(t *testing.T) {
 	}
 }
 
+func TestReverseProxy_CachedEndpoints_NullResponses(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestReverseProxy_CachedEndpoints_NullResponses")
+
+	// Set minimal config required for this test
+	config = &Config{
+		AcceptedPaths: []string{"/servers", "/heights", "/fees"},
+	}
+
+	// Setup global servers with nil responses to test error handling
+	servers := &Servers{
+		GlobalCoinServerIDs: nil,
+		GlobalHeights:       nil,
+		GlobalFees:          nil,
+	}
+
+	testCases := []struct {
+		path, method string
+		expectedStatus int
+		expectedError string
+	}{
+		{"/servers", "", HTTPStatusServiceUnavailable, "Service temporarily unavailable"},
+		{"/heights", "", HTTPStatusServiceUnavailable, "Service temporarily unavailable"},
+		{"/fees", "", HTTPStatusServiceUnavailable, "Service temporarily unavailable"},
+	}
+
+	for _, tc := range testCases {
+		req := httptest.NewRequest("GET", tc.path, nil)
+
+		w := httptest.NewRecorder()
+		reverseProxyHandler(servers)(w, req)
+
+		res := w.Result()
+		body, _ := io.ReadAll(res.Body)
+
+		log.Printf("TEST_UNIT: Path: %s | Status: %d | Body: %s", tc.path, res.StatusCode, string(body))
+		assert.Equal(t, tc.expectedStatus, res.StatusCode)
+		assert.JSONEq(t, fmt.Sprintf(`{"error": "%s"}`, tc.expectedError), string(body))
+	}
+}
+
 func TestReverseProxy_BackendRouting(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_BackendRouting")
 
@@ -173,13 +213,17 @@ func TestReverseProxy_NotAcceptedPath(t *testing.T) {
 	reverseProxyHandler(servers)(w, req)
 
 	log.Printf("TEST_UNIT: Received status for invalid path: %d", w.Result().StatusCode)
-	assert.Equal(t, http.StatusNotFound, w.Result().StatusCode)
+	assert.Equal(t, HTTPStatusNotFound, w.Result().StatusCode)
+
+	// Verify generic error message is returned
+	body, _ := io.ReadAll(w.Result().Body)
+	assert.JSONEq(t, `{"error": "Not found"}`, string(body))
 }
 
 func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_NotAcceptedMethod")
 
-	config = &Config{AcceptedMethods: []string{"validmethod"}}
+	config = &Config{AcceptedPaths: []string{"/"}, AcceptedMethods: []string{"validmethod"}}
 	req := httptest.NewRequest("POST", "/", strings.NewReader(
 		`{"method":"invalidmethod"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -192,7 +236,11 @@ func TestReverseProxy_NotAcceptedMethod(t *testing.T) {
 	reverseProxyHandler(servers)(w, req)
 
 	log.Printf("TEST_UNIT: Received status for invalid method: %d", w.Result().StatusCode)
-	assert.Equal(t, http.StatusNotFound, w.Result().StatusCode)
+	assert.Equal(t, HTTPStatusNotFound, w.Result().StatusCode)
+
+	// Verify generic error message is returned
+	body, _ := io.ReadAll(w.Result().Body)
+	assert.JSONEq(t, `{"error": "Not found"}`, string(body))
 }
 
 func TestReverseProxy_CoinExtraction(t *testing.T) {
@@ -231,4 +279,62 @@ func TestReverseProxy_CoinExtraction(t *testing.T) {
 			assert.Equal(t, tc.expectedCoin, coin)
 		}
 	}
+}
+
+func TestReverseProxy_InvalidJSONRequest(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestReverseProxy_InvalidJSONRequest")
+
+	// Set minimal config required for this test
+	config = &Config{
+		AcceptedMethods: []string{"testmethod"},
+		AcceptedPaths:   []string{"/"},
+	}
+
+	// Setup global servers for testing
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC": {"ids": [1]}}`),
+	}
+
+	// Test with invalid JSON
+	req := httptest.NewRequest("POST", "/", strings.NewReader("invalid json"))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	reverseProxyHandler(servers)(w, req)
+
+	res := w.Result()
+	body, _ := io.ReadAll(res.Body)
+
+	log.Printf("TEST_UNIT: Invalid JSON | Status: %d | Body: %s", res.StatusCode, string(body))
+	assert.Equal(t, HTTPStatusBadRequest, res.StatusCode)
+	assert.JSONEq(t, `{"error": "Bad request"}`, string(body))
+}
+
+func TestReverseProxy_MissingRequestBody(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestReverseProxy_MissingRequestBody")
+
+	// Set minimal config required for this test
+	config = &Config{
+		AcceptedMethods: []string{"testmethod"},
+		AcceptedPaths:   []string{"/"},
+	}
+
+	// Setup global servers for testing
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC": {"ids": [1]}}`),
+	}
+
+	// Test with missing request body
+	req := httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	reverseProxyHandler(servers)(w, req)
+
+	res := w.Result()
+	body, _ := io.ReadAll(res.Body)
+
+	log.Printf("TEST_UNIT: Missing body | Status: %d | Body: %s", res.StatusCode, string(body))
+	assert.Equal(t, HTTPStatusBadRequest, res.StatusCode)
+	assert.JSONEq(t, `{"error": "Bad request"}`, string(body))
 }

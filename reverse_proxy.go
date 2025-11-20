@@ -43,6 +43,32 @@ func writeErrorResponse(w http.ResponseWriter, status int, message string, detai
 	_ = WriteJSONResponse(w, response)
 }
 
+// writeGenericErrorResponse writes a generic error response to the client while logging detailed error internally
+func writeGenericErrorResponse(w http.ResponseWriter, status int, genericMsg string, operation string, err error) {
+	logger.Printf(LogPrefixError+" %s: %v", operation, err)
+	w.WriteHeader(status)
+	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, genericMsg))
+	_ = WriteJSONResponse(w, response)
+}
+
+// writeServerErrorResponse writes a server error response with generic message to client
+func writeServerErrorResponse(w http.ResponseWriter, operation string, err error) {
+	writeGenericErrorResponse(w, HTTPStatusServiceUnavailable, ErrorMessageServiceUnavailable, operation, err)
+}
+
+// writeBadRequestResponse writes a bad request error response
+func writeBadRequestResponse(w http.ResponseWriter, operation string, err error) {
+	writeGenericErrorResponse(w, HTTPStatusBadRequest, ErrorMessageBadRequest, operation, err)
+}
+
+// writeNotFoundResponse writes a not found error response
+func writeNotFoundResponse(w http.ResponseWriter) {
+	logger.Print(LogPrefixError+" "+ErrorMessageNotFound)
+	w.WriteHeader(HTTPStatusNotFound)
+	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, ErrorMessageNotFound))
+	_ = WriteJSONResponse(w, response)
+}
+
 func logCachedRequest(ip, endpoint string, start time.Time) {
 	elapsed := time.Since(start)
 	logger.Printf(LogPrefixRevProxy+" %s request %s relayed OK from cache, "+LogExecTimerFormat, ip, endpoint, elapsed)
@@ -61,15 +87,13 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		requestData, err := extractRequestData(req)
 		if err != nil {
-			logError("extractRequestData", ErrorMessageFailedExtractRequestData, err)
-			writeErrorResponse(rw, HTTPStatusBadRequest, ErrorMessageFailedExtractRequestData)
+			writeBadRequestResponse(rw, "extractRequestData", err)
 			return
 		}
 
 		// Check if the request path is in the acceptedPaths list
 		if !isPathAccepted(req.URL.Path) {
-			logError("isPathAccepted", ErrorMessageInvalidPath, fmt.Errorf("%s not in accepted paths", req.URL.Path))
-			http.NotFound(rw, req)
+			writeNotFoundResponse(rw)
 			return
 		}
 
@@ -77,6 +101,10 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 
 		switch {
 		case req.URL.Path == "/servers" || requestData.Method == "servers":
+			if servers.GlobalCoinServerIDs == nil {
+				writeServerErrorResponse(rw, "servers endpoint", fmt.Errorf("global coin server IDs not available"))
+				return
+			}
 			response := servers.GlobalCoinServerIDs
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
@@ -85,6 +113,10 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 			return
 
 		case req.URL.Path == "/heights" || req.URL.Path == "/height" || requestData.Method == "heights" || requestData.Method == "height":
+			if servers.GlobalHeights == nil {
+				writeServerErrorResponse(rw, "heights endpoint", fmt.Errorf("global heights not available"))
+				return
+			}
 			response := servers.GlobalHeights
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
@@ -93,6 +125,10 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 			return
 
 		case req.URL.Path == "/fees" || requestData.Method == "fees":
+			if servers.GlobalFees == nil {
+				writeServerErrorResponse(rw, "fees endpoint", fmt.Errorf("global fees not available"))
+				return
+			}
 			response := servers.GlobalFees
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
@@ -111,22 +147,19 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 
 		default:
 			if !isMethodAccepted(requestData.Method) {
-				logError("isMethodAccepted", ErrorMessageInvalidMethod, fmt.Errorf("%s not in accepted methods", requestData.Method))
-				http.NotFound(rw, req)
+				writeNotFoundResponse(rw)
 				return
 			}
 
 			coin, err := extractCoin(requestData)
 			if err != nil {
-				logError("extractCoin", "failed to extract coin from params", err)
-				writeErrorResponse(rw, http.StatusBadRequest, "Failed to extract coin parameter")
+				writeBadRequestResponse(rw, "extractCoin", err)
 				return
 			}
 
 			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, RetryAttemptsDefault)
 			if err != nil {
-				logError("retryWithRandomValidServer", "no valid server available", err)
-				writeErrorResponse(rw, HTTPStatusServiceUnavailable, ErrorMessageNoValidServerForCoin+coin)
+				writeServerErrorResponse(rw, "retryWithRandomValidServer", err)
 				return
 			}
 
@@ -300,13 +333,17 @@ func decompressResponseBody(response *http.Response) ([]byte, error) {
 
 // extractRequestData extracts the method, parameters, and client IP from the request.
 func extractRequestData(req *http.Request) (RequestData, error) {
-	buf, _ := io.ReadAll(req.Body)
+	buf, err := io.ReadAll(req.Body)
+	if err != nil {
+		return RequestData{}, fmt.Errorf("failed to read request body: %w", err)
+	}
+	
 	rdr1 := io.NopCloser(bytes.NewBuffer(buf))
 	rdr2 := io.NopCloser(bytes.NewBuffer(buf))
 	requestData, err := extractMethodParamsIp(rdr1, req)
 
 	if err != nil {
-		return RequestData{Method: JSONNullValue, Params: nil, Ip: JSONNullValue}, err
+		return RequestData{}, fmt.Errorf("failed to extract method and params: %w", err)
 	}
 	req.Body = rdr2
 	return requestData, nil
@@ -325,8 +362,7 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 	} else {
 		ip, _, err = net.SplitHostPort(req.RemoteAddr)
 		if err != nil {
-			logError("extractClientIP", "failed to extract client IP", err)
-			return RequestData{Method: JSONNullValue, Params: nil, Ip: ""}, err
+			return RequestData{}, fmt.Errorf("failed to extract client IP: %w", err)
 		}
 	}
 
@@ -338,15 +374,14 @@ func extractMethodParamsIp(rdr io.Reader, req *http.Request) (RequestData, error
 	case http.MethodPost:
 		err := json.NewDecoder(rdr).Decode(&requestData)
 		if err != nil {
-			logError("JSON decode", "failed to parse request JSON", err)
-			return RequestData{}, fmt.Errorf(ErrorMessageFailedParseJSON+": %w", err)
+			return RequestData{}, fmt.Errorf("failed to parse request JSON: %w", err)
 		}
 		requestData.Ip = ip
 		return requestData, nil
 	}
 
 	requestData.Path = req.URL.Path
-	return RequestData{}, nil
+	return RequestData{}, fmt.Errorf("unsupported HTTP method: %s", req.Method)
 }
 
 // transformRequestToEXRSyntax transforms the request to EXR syntax.
@@ -378,7 +413,7 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 		// Provide more specific error messages based on the error type
 		if netErr, ok := err.(net.Error); ok {
 			if netErr.Timeout() {
-				return nil, fmt.Errorf("request timeout after %v: %w", req.Context().Value("timeout"), err)
+				return nil, fmt.Errorf("request timeout: %w", err)
 			}
 			if netErr.Temporary() {
 				return nil, fmt.Errorf("temporary network error: %w", err)
@@ -400,7 +435,7 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 	}
 
 	if resp.StatusCode != HTTPStatusOK {
-		return nil, fmt.Errorf(ErrorMessageUnexpectedServerResponse, resp.Status)
+		return nil, fmt.Errorf("unexpected server response status: %s", resp.Status)
 	}
 
 	return resp, nil
