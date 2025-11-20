@@ -63,7 +63,7 @@ func writeBadRequestResponse(w http.ResponseWriter, operation string, err error)
 
 // writeNotFoundResponse writes a not found error response
 func writeNotFoundResponse(w http.ResponseWriter) {
-	logger.Print(LogPrefixError+" "+ErrorMessageNotFound)
+	logger.Print(LogPrefixError + " " + ErrorMessageNotFound)
 	w.WriteHeader(HTTPStatusNotFound)
 	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, ErrorMessageNotFound))
 	_ = WriteJSONResponse(w, response)
@@ -200,7 +200,11 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			continue
 		}
 
+		// Use read lock for getting server data
+		locks.servers.RLock()
 		server, exists := servers.GetServerByID(randomValidServerID)
+		locks.servers.RUnlock()
+
 		if !exists {
 			logError("GetServerByID", fmt.Sprintf("server %d not found for coin %s (attempt %d/%d)", randomValidServerID, coin, i+1, maxRetries), fmt.Errorf(ErrorMessageServerIDNotFound, randomValidServerID))
 			lastError = fmt.Errorf(ErrorMessageServerNotFound)
@@ -337,7 +341,7 @@ func extractRequestData(req *http.Request) (RequestData, error) {
 	if err != nil {
 		return RequestData{}, fmt.Errorf("failed to read request body: %w", err)
 	}
-	
+
 	rdr1 := io.NopCloser(bytes.NewBuffer(buf))
 	rdr2 := io.NopCloser(bytes.NewBuffer(buf))
 	requestData, err := extractMethodParamsIp(rdr1, req)

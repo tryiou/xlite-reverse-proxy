@@ -36,6 +36,9 @@ func initHTTPClient() error {
 		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", config.ConsensusThreshold)
 	}
 
+	locks.config.RLock()
+	defer locks.config.RUnlock()
+
 	httpClient = &http.Client{
 		Timeout: time.Duration(config.HttpTimeout) * time.Second,
 		Transport: &http.Transport{

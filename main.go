@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-var mu sync.Mutex
-
 var config *Config
 
 // Global HTTP client with connection pooling

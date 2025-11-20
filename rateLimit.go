@@ -27,8 +27,8 @@ func init() {
 }
 
 func getVisitor(ip string) *rate.Limiter {
-	mu.Lock()
-	defer mu.Unlock()
+	locks.rateLimit.Lock()
+	defer locks.rateLimit.Unlock()
 
 	v, exists := visitors[ip]
 	if !exists {
@@ -49,13 +49,13 @@ func cleanupVisitors() {
 	for {
 		time.Sleep(time.Minute)
 
-		mu.Lock()
+		locks.rateLimit.Lock()
 		for ip, v := range visitors {
 			if time.Since(v.lastSeen) > VisitorCleanupInterval {
 				delete(visitors, ip)
 			}
 		}
-		mu.Unlock()
+		locks.rateLimit.Unlock()
 	}
 }
 

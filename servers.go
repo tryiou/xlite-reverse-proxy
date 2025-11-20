@@ -25,8 +25,11 @@ import (
 // It assigns a unique ID to the server and initializes its data structures.
 // This function is safe for concurrent use.
 func (servers *Servers) AddServer(s *Server) int {
-	mu.Lock()
-	defer mu.Unlock()
+	locks.servers.Lock()
+	defer locks.servers.Unlock()
+
+	locks.urlToID.Lock()
+	defer locks.urlToID.Unlock()
 
 	if servers.Slice == nil {
 		servers.Slice = []*Server{}
@@ -62,8 +65,11 @@ func (servers *Servers) AddServer(s *Server) int {
 // RemoveServer removes a server from the list of managed servers.
 // This function is safe for concurrent use.
 func (servers *Servers) RemoveServer(server *Server) {
-	mu.Lock()
-	defer mu.Unlock()
+	locks.servers.Lock()
+	defer locks.servers.Unlock()
+
+	locks.urlToID.Lock()
+	defer locks.urlToID.Unlock()
 
 	for i, srv := range servers.Slice {
 		if srv == server {
@@ -315,8 +321,8 @@ func (servers *Servers) UpdateGlobalHeights() {
 // RemoveServerFromGlobalCoinList removes a specific server ID from a coin's list of valid servers.
 // This is typically called when a server fails a health check or request.
 func (servers *Servers) RemoveServerFromGlobalCoinList(coin string, id int) {
-	mu.Lock()
-	defer mu.Unlock()
+	locks.consensus.Lock()
+	defer locks.consensus.Unlock()
 
 	if servers.GlobalCoinServerIDs == nil {
 		return
@@ -363,8 +369,8 @@ func (servers *Servers) RemoveServerFromGlobalCoinList(coin string, id int) {
 // removeNonConsensusServersFromGlobalList removes server IDs from the global list for a given coin
 // if they are part of a non-consensus group. It also cleans up the coin data from the affected servers.
 func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap map[string][]int) {
-	mu.Lock()
-	defer mu.Unlock()
+	locks.consensus.Lock()
+	defer locks.consensus.Unlock()
 
 	gCoinsIDs := servers.GlobalCoinServerIDs
 	for coin, serverIDs := range nonConsensusMap {
@@ -391,6 +397,7 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 				logger.Printf("Updated 'ids' array for coin: %s %v\n", coin, newIDsValue)
 
 				// Delete the non-consensus coin(s) from each affected server's coinMap.
+				// This operation doesn't need the servers lock since we're only modifying individual server data
 				for _, serverID := range serverIDs {
 					if server, exists := servers.GetServerByID(serverID); exists {
 						logger.Printf(LogPrefixServerError+" Removing %s from coinMap\n", server.id, coin)
@@ -443,34 +450,107 @@ func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 // UpdateAllServersData fetches the latest data (ping, heights, fees) from all registered servers concurrently.
 // After all servers have been updated, it calculates the global consensus for heights and fees.
 func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
-	// Use a wait group to wait for all goroutines to finish.
-	// Iterate over all servers in the servers slice
-	for i := range servers.Slice {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			server := servers.Slice[index]
+	// First, do concurrent ping requests with short timeout
+	pingResults := make(chan struct {
+		server *Server
+		err    error
+	}, len(servers.Slice))
 
-			err := server.server_GetPing()
-			if err != nil {
-				logServerError(server.id, "ping", err)
-			}
-			if server.ping == 1 {
-				startTimer := time.Now()
-				err := server.server_GetHeights()
-				elapsedTimer := time.Since(startTimer)
-				if err != nil {
-					logger.Printf(LogPrefixServerError+" getting heights: %v", server.id, err)
-				}
-				err = server.server_GetFees()
-				if err != nil {
-					logger.Printf(LogPrefixServerError+" getting fees: %v", server.id, err)
-				}
-				logger.Printf(LogPrefixServerHeights+" : %v %v", server.id, server.getheights, elapsedTimer)
-			}
-		}(i)
+	// Start ping goroutines
+	for _, server := range servers.Slice {
+		wg.Add(1)
+		go func(s *Server) {
+			defer wg.Done()
+			err := s.server_GetPing()
+			pingResults <- struct {
+				server *Server
+				err    error
+			}{server: s, err: err}
+		}(server)
 	}
-	wg.Wait()
+
+	healthyServers := make([]*Server, 0, len(servers.Slice))
+	for i := 0; i < len(servers.Slice); i++ {
+		result := <-pingResults
+		if result.err == nil && result.server.ping == PingSuccessValue {
+			healthyServers = append(healthyServers, result.server)
+		} else {
+			logger.Printf(LogPrefixServerError+" ping failed: %v", result.server.id, result.err)
+		}
+	}
+
+	// Now update heights and fees concurrently for healthy servers
+	heightsResults := make(chan struct {
+		server  *Server
+		heights *fastjson.Value
+		err     error
+	}, len(healthyServers))
+
+	feesResults := make(chan struct {
+		server *Server
+		fees   *fastjson.Value
+		err    error
+	}, len(healthyServers))
+
+	// Start concurrent heights requests
+	for _, server := range healthyServers {
+		wg.Add(1)
+		go func(s *Server) {
+			defer wg.Done()
+			startTimer := time.Now()
+
+			getheights, err := s.server_GetHeights_Concurrent()
+			elapsedTimer := time.Since(startTimer)
+
+			heightsResults <- struct {
+				server  *Server
+				heights *fastjson.Value
+				err     error
+			}{server: s, heights: getheights, err: err}
+
+			if err != nil {
+				logger.Printf(LogPrefixServerError+" getting heights: %v", s.id, err)
+			} else {
+				logger.Printf(LogPrefixServerHeights+" : %v %v", s.id, getheights, elapsedTimer)
+			}
+		}(server)
+	}
+
+	// Start concurrent fees requests
+	for _, server := range healthyServers {
+		wg.Add(1)
+		go func(s *Server) {
+			defer wg.Done()
+
+			getfees, err := s.server_GetFees_Concurrent()
+
+			feesResults <- struct {
+				server *Server
+				fees   *fastjson.Value
+				err    error
+			}{server: s, fees: getfees, err: err}
+
+			if err != nil {
+				logger.Printf(LogPrefixServerError+" getting fees: %v", s.id, err)
+			}
+		}(server)
+	}
+
+	// Collect heights results
+	for i := 0; i < len(healthyServers); i++ {
+		result := <-heightsResults
+		if result.err == nil {
+			result.server.getheights = result.heights
+		}
+	}
+
+	// Collect fees results
+	for i := 0; i < len(healthyServers); i++ {
+		result := <-feesResults
+		if result.err == nil {
+			result.server.getfees = result.fees
+		}
+	}
 
 	// After all servers are updated, calculate the global consensus state.
 	servers.updateCoinDataForAllServers()

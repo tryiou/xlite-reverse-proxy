@@ -83,6 +83,17 @@ type JsonResponse struct {
 	Id     int     `json:"id"`
 }
 
+// LockManager provides granular locking for different parts of the application
+type LockManager struct {
+	servers   sync.RWMutex // Protects servers.Slice and server data
+	consensus sync.RWMutex // Protects GlobalHeights, GlobalFees, GlobalCoinServerIDs
+	rateLimit sync.Mutex   // Protects visitors map in rateLimit.go
+	config    sync.RWMutex // Protects config updates
+	urlToID   sync.RWMutex // Protects servers.urlToID map
+}
+
+var locks = &LockManager{}
+
 // ObjectPool manages reusable objects to reduce allocations
 type ObjectPool struct {
 	arenaPool sync.Pool

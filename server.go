@@ -41,7 +41,8 @@ func (s *Server) server_GetPing() error {
 	payloadMethod := "ping"
 	payloadParams := []interface{}{}
 
-	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
+	// Use 5-second timeout for ping requests
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams, 5)
 	if err != nil {
 		s.setDefaultResponses()
 		return fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessagePingFailed, err)
@@ -61,7 +62,6 @@ func (s *Server) server_GetPing() error {
 
 	if result.Type() == fastjson.TypeNumber && result.GetInt() == PingSuccessValue {
 		s.ping = PingSuccessValue
-		// logServerSuccess(s.id, "ping")
 	} else {
 		s.ping = PingFailureValue
 		logServerError(s.id, "ping", fmt.Errorf("returned non-success value: %d", result.GetInt()))
@@ -161,6 +161,20 @@ func (s *Server) server_GetFees() error {
 	return nil
 }
 
+func (s *Server) server_GetFees_Concurrent() (*fastjson.Value, error) {
+	payloadMethod := "fees"
+	payloadParams := []interface{}{}
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
+	if err != nil {
+		return getDefaultJSONResponse(), fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageGetFeesFailed, err)
+	}
+	jsonResp, err := parseJSON(response)
+	if err != nil {
+		return getDefaultJSONResponse(), fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
+	}
+	return jsonResp, nil
+}
+
 func (s *Server) server_GetHeights() error {
 	payloadMethod := "heights"
 	payloadParams := []interface{}{}
@@ -182,6 +196,20 @@ func (s *Server) server_GetHeights() error {
 	return nil
 }
 
+func (s *Server) server_GetHeights_Concurrent() (*fastjson.Value, error) {
+	payloadMethod := "heights"
+	payloadParams := []interface{}{}
+	response, err := s.makeHTTPRequest(http.MethodPost, payloadMethod, payloadParams)
+	if err != nil {
+		return getDefaultJSONResponse(), fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageGetHeightsFailed, err)
+	}
+	jsonResp, err := parseJSON(response)
+	if err != nil {
+		return getDefaultJSONResponse(), fmt.Errorf("server[%d] %s: %w", s.id, ErrorMessageJSONParseFailed, err)
+	}
+	return jsonResp, nil
+}
+
 func (s *Server) sortGetHeightsKeys() {
 	if s.getheights != nil {
 		resultObj := s.getheights.Get("result")
@@ -201,11 +229,17 @@ func (s *Server) sortGetHeightsKeys() {
 	}
 }
 
-func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams []interface{}) ([]byte, error) {
+func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams []interface{}, timeoutSeconds ...int) ([]byte, error) {
 	var (
 		url     string
 		payload string
 	)
+
+	// Use provided timeout or default from config
+	timeout := config.HttpTimeout
+	if len(timeoutSeconds) > 0 {
+		timeout = timeoutSeconds[0]
+	}
 
 	// Validate server configuration
 	if s.url == "" {
@@ -252,12 +286,10 @@ func (s *Server) makeHTTPRequest(httpMethod, payloadMethod string, payloadParams
 
 	req.Header.Set(HeaderContentType, ContentTypeJSON)
 
-	// Add request timeout context if not already set
-	if req.Context() == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.HttpTimeout)*time.Second)
-		defer cancel()
-		req = req.WithContext(ctx)
-	}
+	// Use the determined timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
 
 	res, err := httpClient.Do(req)
 	if err != nil {

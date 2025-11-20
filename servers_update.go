@@ -189,12 +189,12 @@ func UpdateServersFromJSON(servers *Servers) {
 		if server, ok := servers.GetServerByURL(serverCfg.URL); ok {
 			// Server exists, update its properties if necessary.
 			// Note: GetServerByURL now returns a pointer, so changes are reflected.
-			mu.Lock()
 			if server.exr != serverCfg.EXR {
+				locks.servers.Lock()
 				logger.Printf("|SERVERS_UPDATE| Updating server[%d]: URL=%s, EXR=%v -> %v", server.id, serverCfg.URL, server.exr, serverCfg.EXR)
 				server.exr = serverCfg.EXR
+				locks.servers.Unlock()
 			}
-			mu.Unlock()
 		} else {
 			// Server is new, add it to the list.
 			newServer := &Server{
@@ -208,6 +208,7 @@ func UpdateServersFromJSON(servers *Servers) {
 
 	// Remove servers that are no longer in the configuration.
 	// We build a new slice to do this efficiently in one pass (O(N)).
+	locks.servers.Lock()
 	var updatedServerSlice []*Server
 	for _, server := range servers.Slice {
 		if configServerUrls[server.url] {
@@ -217,9 +218,8 @@ func UpdateServersFromJSON(servers *Servers) {
 		}
 	}
 
-	mu.Lock()
 	servers.Slice = updatedServerSlice
-	mu.Unlock()
+	locks.servers.Unlock()
 
 	logger.Printf("Successfully updated servers from JSON. Active servers: %d", len(servers.Slice))
 }
@@ -241,9 +241,9 @@ func updateServersFromProviders(servers *Servers) {
 		}
 
 		// Update config with mutex protection to prevent race conditions
-		mu.Lock()
+		locks.config.Lock()
 		config.ServersMap = serverConfigs
-		mu.Unlock()
+		locks.config.Unlock()
 		UpdateServersFromJSON(servers)
 
 		// Successfully updated from a provider, so we can stop.
