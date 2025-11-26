@@ -307,9 +307,6 @@ func (servers *Servers) UpdateGlobalHeights() {
 	}
 	servers.GlobalCoinServerIDs = sortedGlobalCoinServerIDsJSON
 
-	// 8. Update individual server coin data based on new heights.
-	servers.updateCoinDataForAllServers()
-
 	// 9. Find and remove servers with non-consensus block hashes.
 	nonConsensusServersMap := FindServersFailingHashConsensus(servers)
 	if len(nonConsensusServersMap) > 0 {
@@ -790,12 +787,11 @@ func isHashPresentInCoinStorage(storage map[int]string, hashToFind string) bool 
 	return false
 }
 
-// calculateConsensusFees determines the consensus fee for each coin based on the fees
-// reported by all servers. A fee is considered consensus if it's reported by a
-// sufficient ratio of servers (defined by `config.ConsensusThreshold`).
-func buildJSONValue(consensusData map[string]interface{}) *fastjson.Value {
-	arena := globalPool.GetArena()
-	defer globalPool.PutArena(arena)
+// buildHeightsJSON creates a JSON response for consensus heights using local arena
+// to avoid race conditions with shared global pool resources.
+func buildHeightsJSON(consensusData map[string]int) *fastjson.Value {
+	// Use local arena to avoid global pool conflicts
+	arena := &fastjson.Arena{}
 
 	result := arena.NewObject()
 	errNull := arena.NewNull()
@@ -805,7 +801,7 @@ func buildJSONValue(consensusData map[string]interface{}) *fastjson.Value {
 	jsonObj.Set("result", result)
 	jsonObj.Set("error", errNull)
 
-	// Add sorted coins with their values
+	// Add sorted coins with int values (heights)
 	sortedCoins := make([]string, 0, len(consensusData))
 	for coin := range consensusData {
 		sortedCoins = append(sortedCoins, coin)
@@ -813,14 +809,35 @@ func buildJSONValue(consensusData map[string]interface{}) *fastjson.Value {
 	sort.Strings(sortedCoins)
 
 	for _, coin := range sortedCoins {
-		switch v := consensusData[coin].(type) {
-		case int:
-			result.Set(coin, arena.NewNumberInt(v))
-		case float64:
-			result.Set(coin, arena.NewNumberFloat64(v))
-		default:
-			logger.Printf("Unexpected type for consensus data: %T", v)
-		}
+		result.Set(coin, arena.NewNumberInt(consensusData[coin]))
+	}
+
+	return jsonObj
+}
+
+// buildFeesJSON creates a JSON response for consensus fees using local arena
+// to avoid race conditions with shared global pool resources.
+func buildFeesJSON(consensusData map[string]float64) *fastjson.Value {
+	// Use local arena to avoid global pool conflicts
+	arena := &fastjson.Arena{}
+
+	result := arena.NewObject()
+	errNull := arena.NewNull()
+
+	// Build main response object
+	jsonObj := arena.NewObject()
+	jsonObj.Set("result", result)
+	jsonObj.Set("error", errNull)
+
+	// Add sorted coins with float64 values (fees)
+	sortedCoins := make([]string, 0, len(consensusData))
+	for coin := range consensusData {
+		sortedCoins = append(sortedCoins, coin)
+	}
+	sort.Strings(sortedCoins)
+
+	for _, coin := range sortedCoins {
+		result.Set(coin, arena.NewNumberFloat64(consensusData[coin]))
 	}
 
 	return jsonObj
@@ -850,7 +867,19 @@ func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 		}
 	}
 
-	return buildJSONValue(consensusData)
+	// Convert map[string]interface{} to map[string]float64
+	feesData := make(map[string]float64)
+	for coin, value := range consensusData {
+		switch v := value.(type) {
+		case float64:
+			feesData[coin] = v
+		case int:
+			feesData[coin] = float64(v)
+		case int64:
+			feesData[coin] = float64(v)
+		}
+	}
+	return buildFeesJSON(feesData)
 }
 
 // createGlobalHeightsJSON creates a `fastjson.Value` object representing the global
@@ -869,7 +898,19 @@ func createGlobalHeightsJSON(mostCommonHeightsRanges map[string][]int) (*fastjso
 		consensusData[coin] = minHeight
 	}
 
-	return buildJSONValue(consensusData), nil
+	// Convert map[string]interface{} to map[string]int
+	heightsData := make(map[string]int)
+	for coin, value := range consensusData {
+		switch v := value.(type) {
+		case int:
+			heightsData[coin] = v
+		case int64:
+			heightsData[coin] = int(v)
+		case float64:
+			heightsData[coin] = int(v)
+		}
+	}
+	return buildHeightsJSON(heightsData), nil
 }
 
 // createCommonHeightServersJSON creates a `fastjson.Value` object that maps each coin
