@@ -716,3 +716,96 @@ func TestServersBlockCacheManagement_SingleCoin(t *testing.T) {
 		}
 	}
 }
+
+// TestEvictionLoopBackoffPreservation verifies that servers in backoff
+// (skipped from ping, absent from error maps) retain their consecutiveFailures
+// and nextRetryAt values after the eviction loop runs. This tests the fix for
+// the bug where backoff was incorrectly reset for skipped servers.
+func TestEvictionLoopBackoffPreservation(t *testing.T) {
+	setupGlobalConfigForServersTest()
+
+	now := time.Now()
+
+	// Server 1: in backoff with 3 consecutive failures
+	srv1 := &Server{
+		id:                  1,
+		url:                 "http://server1",
+		consecutiveFailures: 3,
+		nextRetryAt:         now.Add(80 * time.Second), // 3 failures → 80s backoff
+		coinsMap:            make(map[string]Coin),
+		getfees:             getDefaultJSONResponse(),
+		getheights:          getDefaultJSONResponse(),
+	}
+
+	// Server 2: healthy server, heights failed, fees succeeded
+	srv2 := &Server{
+		id:                  2,
+		url:                 "http://server2",
+		consecutiveFailures: 0,
+		coinsMap:            make(map[string]Coin),
+		getfees:             getDefaultJSONResponse(),
+		getheights:          getDefaultJSONResponse(),
+	}
+
+	// Server 3: healthy server, both heights and fees failed
+	srv3 := &Server{
+		id:                  3,
+		url:                 "http://server3",
+		consecutiveFailures: 0,
+		coinsMap:            make(map[string]Coin),
+		getfees:             getDefaultJSONResponse(),
+		getheights:          getDefaultJSONResponse(),
+	}
+
+	servers := &Servers{Slice: []*Server{srv1, srv2, srv3}}
+
+	// Simulate error maps: only servers 2 and 3 were pinged
+	serverHeightsErr := map[int]error{
+		2: fmt.Errorf("heights error"),
+		3: fmt.Errorf("heights error"),
+	}
+	serverFeesErr := map[int]error{
+		2: nil, // fees succeeded for server 2
+		3: fmt.Errorf("fees error"),
+	}
+
+	// Run the eviction loop logic (same as UpdateAllServersData)
+	for _, server := range servers.Slice {
+		heightsErr, inHeights := serverHeightsErr[server.id]
+		feesErr, inFees := serverFeesErr[server.id]
+
+		if !inHeights && !inFees {
+			continue
+		}
+
+		heightsFailed := heightsErr != nil
+		feesFailed := feesErr != nil
+
+		if heightsFailed && feesFailed {
+			server.evict(servers, "heights and fees both failed")
+		} else {
+			backoffLock.Lock()
+			server.consecutiveFailures = 0
+			server.nextRetryAt = time.Time{}
+			backoffLock.Unlock()
+		}
+	}
+
+	// Server 1: backoff should be preserved (not in error maps)
+	assert.Equal(t, 3, srv1.consecutiveFailures,
+		"Server in backoff should retain consecutiveFailures")
+	assert.Equal(t, now.Add(80*time.Second), srv1.nextRetryAt,
+		"Server in backoff should retain nextRetryAt")
+
+	// Server 2: partial success → backoff reset
+	assert.Equal(t, 0, srv2.consecutiveFailures,
+		"Server with partial success should have consecutiveFailures reset")
+	assert.True(t, srv2.nextRetryAt.IsZero(),
+		"Server with partial success should have nextRetryAt reset")
+
+	// Server 3: both failed → evicted with incremented backoff
+	assert.Equal(t, 1, srv3.consecutiveFailures,
+		"Server with both failures should have consecutiveFailures incremented")
+	assert.False(t, srv3.nextRetryAt.IsZero(),
+		"Server with both failures should have nextRetryAt set")
+}

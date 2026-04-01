@@ -222,6 +222,56 @@ func TestReverseProxy_BackendRetry(t *testing.T) {
 	}
 }
 
+func TestReverseProxy_CoinNotFound_NoRetry(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestReverseProxy_CoinNotFound_NoRetry")
+
+	attemptCount := 0
+	// Backend that tracks how many times it's called
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		log.Printf("TEST_UNIT: Backend received request %d for path %s", attemptCount, r.URL.Path)
+		fmt.Fprint(w, `{"result":"success"}`)
+	}))
+	defer backend.Close()
+
+	// Only BTC is in GlobalCoinServerIDs, UNO is not — simulates coin with no provider
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC": {"ids": [1]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend.URL, exr: true},
+		},
+	}
+
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"validmethod"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+
+	if err := initHTTPClient(); err != nil {
+		t.Fatalf("Failed to initialize HTTP client: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(
+		`{"method":"validmethod","params":["UNO"]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	reverseProxyHandler(servers)(w, req)
+
+	res := w.Result()
+	body, _ := io.ReadAll(res.Body)
+
+	log.Printf("TEST_UNIT: Attempts: %d | Status: %d | Body: %s", attemptCount, res.StatusCode, string(body))
+	// Should fail immediately without hitting the backend at all
+	assert.Equal(t, 0, attemptCount, "Backend should not be called for unsupported coin")
+	assert.Equal(t, http.StatusServiceUnavailable, res.StatusCode)
+}
+
 func TestReverseProxy_NotAcceptedPath(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_NotAcceptedPath")
 

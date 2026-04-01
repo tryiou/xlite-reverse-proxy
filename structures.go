@@ -16,14 +16,16 @@ type Coin struct {
 }
 
 type Server struct {
-	id            int
-	url           string
-	exr           bool
-	ping          int64 // Change to int64 for atomic operations
-	getfees       *fastjson.Value
-	getheights    *fastjson.Value
-	coinsMap      map[string]Coin
-	hashesStorage map[string]map[int]string
+	id                  int
+	url                 string
+	exr                 bool
+	ping                int64 // Change to int64 for atomic operations
+	getfees             *fastjson.Value
+	getheights          *fastjson.Value
+	coinsMap            map[string]Coin
+	hashesStorage       map[string]map[int]string
+	consecutiveFailures int       // tracks consecutive failures for exponential backoff
+	nextRetryAt         time.Time // when this server is eligible for retry after backoff
 	//                coins   heights hashes
 }
 

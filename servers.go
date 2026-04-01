@@ -7,7 +7,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -411,13 +410,11 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	coinObj := servers.GlobalCoinServerIDs.GetObject(coin)
 	if coinObj == nil {
-		errMsg := fmt.Sprintf(ErrorMessageCoinNotFound, coin)
-		return -1, errors.New(errMsg)
+		return -1, fmt.Errorf("%w: %s", ErrCoinNotFound, coin)
 	}
 	coinArrayValue := coinObj.Get("ids")
 	if coinArrayValue == nil {
-		errMsg := fmt.Sprintf(ErrorMessageServerIDsArrayNotFound, coin)
-		return -1, errors.New(errMsg)
+		return -1, fmt.Errorf("%w: %s", ErrServerIDsArrayNotFound, coin)
 	}
 	coinArray, err := coinArrayValue.Array()
 	if err != nil {
@@ -426,8 +423,7 @@ func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	// Get the length of the coinArray
 	coinArrayLen := len(coinArray)
 	if coinArrayLen < 1 {
-		errMsg := fmt.Sprintf(ErrorMessageNoServerForCoin, coin, coinArrayLen)
-		return -1, errors.New(errMsg)
+		return -1, fmt.Errorf("%w: %s (count: %d)", ErrNoServerForCoin, coin, coinArrayLen)
 	}
 
 	// Create a private instance of rand.Rand with a custom seed
@@ -444,6 +440,45 @@ func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	return randomValidServerID, nil
 }
 
+// backoffLock protects Server.consecutiveFailures and Server.nextRetryAt
+// from concurrent access between the update goroutine and HTTP handler goroutines.
+var backoffLock sync.Mutex
+
+// computeBackoff returns the exponential backoff duration based on consecutive failures.
+// Progression: 20s, 40s, 80s, 160s, 320s, capped at BackoffMaxInterval (5min).
+func computeBackoff(failures int) time.Duration {
+	if failures <= 0 {
+		return 0
+	}
+	backoff := BackoffBaseInterval * time.Duration(1<<(failures-1))
+	if backoff > BackoffMaxInterval {
+		backoff = BackoffMaxInterval
+	}
+	return backoff
+}
+
+// evict removes a server from global maps, clears its data, and applies exponential backoff.
+func (server *Server) evict(servers *Servers, reason string) {
+	logger.Printf(LogPrefixServerError+" %s, evicting", server.id, reason)
+	for coin := range server.coinsMap {
+		servers.RemoveServerFromGlobalCoinList(coin, server.id)
+	}
+
+	// Lock server data fields to prevent concurrent reads from HTTP handlers
+	// Must be acquired AFTER consensus lock (in RemoveServerFromGlobalCoinList)
+	// to maintain lock ordering: serversLock -> consensusLock
+	locks.servers.Lock()
+	server.coinsMap = make(map[string]Coin)
+	server.getfees = getDefaultJSONResponse()
+	server.getheights = getDefaultJSONResponse()
+	locks.servers.Unlock()
+
+	backoffLock.Lock()
+	server.consecutiveFailures++
+	server.nextRetryAt = time.Now().Add(computeBackoff(server.consecutiveFailures))
+	backoffLock.Unlock()
+}
+
 // UpdateAllServersData fetches the latest data (ping, heights, fees) from all registered servers concurrently.
 // After all servers have been updated, it calculates the global consensus for heights and fees.
 func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
@@ -453,8 +488,16 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 		err    error
 	}, len(servers.Slice))
 
-	// Start ping goroutines
+	// Start ping goroutines, skip servers still in backoff period
+	pingedCount := 0
 	for _, server := range servers.Slice {
+		backoffLock.Lock()
+		skip := !server.nextRetryAt.IsZero() && time.Now().Before(server.nextRetryAt)
+		backoffLock.Unlock()
+		if skip {
+			continue
+		}
+		pingedCount++
 		wg.Add(1)
 		go func(s *Server) {
 			defer wg.Done()
@@ -466,14 +509,21 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 		}(server)
 	}
 
-	healthyServers := make([]*Server, 0, len(servers.Slice))
-	for i := 0; i < len(servers.Slice); i++ {
+	healthyServers := make([]*Server, 0, pingedCount)
+	pingFailedServers := make([]*Server, 0, pingedCount)
+	for i := 0; i < pingedCount; i++ {
 		result := <-pingResults
 		if result.err == nil && result.server.ping == PingSuccessValue {
 			healthyServers = append(healthyServers, result.server)
 		} else {
 			logger.Printf(LogPrefixServerError+" ping failed: %v", result.server.id, result.err)
+			pingFailedServers = append(pingFailedServers, result.server)
 		}
+	}
+
+	// Evict ping-failed servers with backoff
+	for _, server := range pingFailedServers {
+		server.evict(servers, "ping failed")
 	}
 
 	// Now update heights and fees concurrently for healthy servers
@@ -533,19 +583,46 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 		}(server)
 	}
 
-	// Collect heights results
+	// Collect heights results and track errors
+	serverHeightsErr := make(map[int]error, len(healthyServers))
 	for i := 0; i < len(healthyServers); i++ {
 		result := <-heightsResults
-		if result.err == nil {
-			result.server.getheights = result.heights
-		}
+		result.server.getheights = result.heights
+		serverHeightsErr[result.server.id] = result.err
 	}
 
-	// Collect fees results
+	// Collect fees results and track errors
+	serverFeesErr := make(map[int]error, len(healthyServers))
 	for i := 0; i < len(healthyServers); i++ {
 		result := <-feesResults
-		if result.err == nil {
-			result.server.getfees = result.fees
+		result.server.getfees = result.fees
+		serverFeesErr[result.server.id] = result.err
+	}
+
+	// Evict servers only when BOTH heights and fees failed.
+	// Only process servers that were actually pinged (present in error maps).
+	// Servers skipped due to backoff or evicted by ping failure are absent
+	// from these maps and must not have their backoff state modified.
+	for _, server := range servers.Slice {
+		heightsErr, inHeights := serverHeightsErr[server.id]
+		feesErr, inFees := serverFeesErr[server.id]
+
+		if !inHeights && !inFees {
+			continue // server was not pinged (in backoff or ping-evicted)
+		}
+
+		heightsFailed := heightsErr != nil
+		feesFailed := feesErr != nil
+
+		if heightsFailed && feesFailed {
+			server.evict(servers, fmt.Sprintf("heights and fees both failed: heights=%v fees=%v",
+				heightsErr, feesErr))
+		} else {
+			// Partial or full success: reset backoff
+			backoffLock.Lock()
+			server.consecutiveFailures = 0
+			server.nextRetryAt = time.Time{}
+			backoffLock.Unlock()
 		}
 	}
 

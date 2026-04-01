@@ -228,9 +228,14 @@ func reverseProxy(port int, servers *Servers) {
 
 // retryWithRandomValidServer selects a random valid server, sends the request, and handles the response.
 func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, servers *Servers, coin string, requestData *RequestData, maxRetries int) (*Server, error) {
+	if maxRetries <= 0 {
+		return nil, fmt.Errorf("invalid retry configuration: maxRetries must be positive, got %d", maxRetries)
+	}
 	var lastError error
+	var actualAttempts int
 
 	for i := 0; i < maxRetries; i++ {
+		actualAttempts = i + 1
 		if i > 0 { // Only log for attempts after the first one
 			logger.Printf(LogPrefixRevProxy+" Attempt %d/%d for coin %s", i+1, maxRetries, coin)
 		}
@@ -239,6 +244,10 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		if err != nil {
 			logError("getRandomValidServer", fmt.Sprintf("failed to get random valid server for coin %s (attempt %d/%d)", coin, i+1, maxRetries), err)
 			lastError = err
+			// Permanent error: coin not found or no servers for coin — don't retry
+			if errors.Is(err, ErrCoinNotFound) || errors.Is(err, ErrServerIDsArrayNotFound) || errors.Is(err, ErrNoServerForCoin) {
+				break
+			}
 			continue
 		}
 
@@ -260,38 +269,37 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			continue
 		}
 
-		err = handleOriginServerResponse(rw, req, &server)
+		resp, err := handleOriginServerResponse(req, &server)
 		if err != nil {
 			if strings.Contains(err.Error(), "context canceled") {
 				logError("handleOriginServerResponse", "request context canceled", err)
 				return nil, err
 			}
 
-			// Log the specific error and remove server from rotation
 			logError("handleOriginServerResponse", fmt.Sprintf("server %d response failed for coin %s (attempt %d/%d)", server.id, coin, i+1, maxRetries), err)
 			servers.RemoveServerFromGlobalCoinList(coin, server.id)
 			lastError = err
 
-			// Don't continue retrying if it's a client error (4xx)
-			if strings.Contains(err.Error(), "4") {
+			if strings.Contains(err.Error(), " status: 4") {
 				logger.Printf(LogPrefixRevProxy+" Client error detected, stopping retries: %v", err)
-				break
+				return nil, err
 			}
-		} else {
-			// logger.Printf(LogPrefixRevProxy+" Successfully processed request for coin %s using server %d", coin, server.id)
-			return &server, nil
+			continue
 		}
+
+		if err := WriteJSONResponse(rw, resp); err != nil {
+			return nil, fmt.Errorf("failed to write response: %v", err)
+		}
+		return &server, nil
 	}
 
 	// All retries exhausted
-	logger.Printf(LogPrefixRevProxy+" All %d retry attempts exhausted for coin %s. Last error: %v", maxRetries, coin, lastError)
-
 	// Don't write response here - let the caller handle it to avoid double responses
 	// Provide more context in the error message
 	if lastError != nil {
-		return nil, fmt.Errorf("all %d retry attempts exhausted for coin %s: %w", maxRetries, coin, lastError)
+		return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s: %w", actualAttempts, maxRetries, coin, lastError)
 	}
-	return nil, fmt.Errorf("all %d retry attempts exhausted for coin %s", maxRetries, coin)
+	return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s", actualAttempts, maxRetries, coin)
 }
 
 // updateRequestHeaders updates the request headers for the origin server.
@@ -326,29 +334,25 @@ func updateRequestHeaders(req *http.Request, server *Server, requestData Request
 	return nil
 }
 
-// handleOriginServerResponse sends the request to the origin server and handles the response.
-func handleOriginServerResponse(rw http.ResponseWriter, req *http.Request, server *Server) error {
+// handleOriginServerResponse sends the request to the origin server, parses the response,
+// and returns it. The caller is responsible for writing the response to the client.
+func handleOriginServerResponse(req *http.Request, server *Server) (*fastjson.Value, error) {
 	originServerResponse, err := sendRequestToOriginServer(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request to origin server: %v", err)
+		return nil, fmt.Errorf("failed to send request to origin server: %v", err)
 	}
 
 	responseBody, err := decompressResponseBody(originServerResponse)
 	if err != nil {
-		return fmt.Errorf("failed to decompress response body: %v", err)
+		return nil, fmt.Errorf("failed to decompress response body: %v", err)
 	}
 
 	orgResponse, err := parseAndNormalizeResponse(responseBody, server)
 	if err != nil {
-		return fmt.Errorf("failed to parse and normalize response: %v", err)
+		return nil, fmt.Errorf("failed to parse and normalize response: %v", err)
 	}
 
-	err = WriteJSONResponse(rw, orgResponse)
-	if err != nil {
-		return fmt.Errorf("failed to write response: %v", err)
-	}
-
-	return nil
+	return orgResponse, nil
 }
 
 func extractCoin(requestData RequestData) (string, error) {

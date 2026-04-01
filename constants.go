@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"time"
 )
 
@@ -23,6 +24,12 @@ const (
 
 	// LogRotationInterval is the interval for checking log file size
 	LogRotationInterval = 5 * time.Minute
+
+	// BackoffBaseInterval is the base interval for exponential backoff on server failures
+	BackoffBaseInterval = 20 * time.Second
+
+	// BackoffMaxInterval is the maximum backoff interval for server failures
+	BackoffMaxInterval = 5 * time.Minute
 )
 
 // Constants for HTTP and networking
@@ -179,7 +186,20 @@ const (
 
 	// ErrorMessageServerError is the generic server error message
 	ErrorMessageServerError = "server error"
+)
 
+// Sentinel errors for GetRandomValidServerID — used with errors.Is() to classify permanent errors.
+var (
+	// ErrCoinNotFound indicates no mapping exists for the requested coin in the consensus map.
+	ErrCoinNotFound = errors.New("coin not found in consensus")
+	// ErrServerIDsArrayNotFound indicates the consensus entry exists but lacks a valid server IDs array.
+	ErrServerIDsArrayNotFound = errors.New("server IDs array missing from consensus entry")
+	// ErrNoServerForCoin indicates the consensus entry exists but has zero servers.
+	ErrNoServerForCoin = errors.New("no servers available for coin")
+)
+
+// Additional error message, constant, and configuration constants
+const (
 	// JSONNullString is the string representation of null in JSON
 	JSONNullString = "null"
 
@@ -187,20 +207,20 @@ const (
 	JSONNullValue = "null"
 
 	// Server error message constants
-	ErrorMessagePingFailed      = "ping request failed"
-	ErrorMessageJSONParseFailed = "JSON parse failed"
-	ErrorMessageMissingResult   = "response missing 'result' field"
-	ErrorMessageBlockHashFailed = "getblockhash failed"
-	ErrorMessageGetBlockFailed  = "getblock failed"
-	ErrorMessageGetFeesFailed   = "getfees failed"
+	ErrorMessagePingFailed       = "ping request failed"
+	ErrorMessageJSONParseFailed  = "JSON parse failed"
+	ErrorMessageMissingResult    = "response missing 'result' field"
+	ErrorMessageBlockHashFailed  = "getblockhash failed"
+	ErrorMessageGetBlockFailed   = "getblock failed"
+	ErrorMessageGetFeesFailed    = "getfees failed"
 	ErrorMessageGetHeightsFailed = "getheights failed"
 
 	// Generic error message constants for client responses
 	ErrorMessageServiceUnavailable = "Service temporarily unavailable"
-	ErrorMessageInvalidRequest    = "Invalid request"
-	ErrorMessageRateLimitExceeded = "Rate limit exceeded"
-	ErrorMessageNotFound          = "Not found"
-	ErrorMessageBadRequest        = "Bad request"
+	ErrorMessageInvalidRequest     = "Invalid request"
+	ErrorMessageRateLimitExceeded  = "Rate limit exceeded"
+	ErrorMessageNotFound           = "Not found"
+	ErrorMessageBadRequest         = "Bad request"
 
 	// FilePermissionRWXRWXR is the file permission 0644 (owner: read/write/execute, group: read/write, other: read/write)
 	FilePermissionRWXRWXR = 0644
