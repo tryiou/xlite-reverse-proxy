@@ -277,7 +277,10 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			}
 
 			logError("handleOriginServerResponse", fmt.Sprintf("server %d response failed for coin %s (attempt %d/%d)", server.id, coin, i+1, maxRetries), err)
-			servers.RemoveServerFromGlobalCoinList(coin, server.id)
+
+			// Note: the server is deliberately NOT removed from the coin's valid
+			// server list here. A failed request must not ban a node (especially a
+			// unique one); the retry loop simply picks again from the same list.
 			lastError = err
 
 			if strings.Contains(err.Error(), " status: 4") {

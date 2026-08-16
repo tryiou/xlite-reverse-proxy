@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/valyala/fastjson"
@@ -220,6 +221,60 @@ func TestReverseProxy_BackendRetry(t *testing.T) {
 		// If no retries happened, it might be a 404 due to missing consensus
 		assert.Contains(t, []int{http.StatusOK, http.StatusNotFound}, res.StatusCode)
 	}
+}
+
+func TestRequestFailureKeepsServerInList(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestRequestFailureKeepsServerInList")
+
+	callCount := 0
+	// Backend that always fails
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, ErrorMessageServerError, http.StatusInternalServerError)
+	}))
+	defer backend.Close()
+
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC": {"ids": [1]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend.URL, exr: true},
+		},
+	}
+
+	oldConfig := globalConfig.config
+	oldClient := globalConfig.client
+	defer func() {
+		globalConfig.config = oldConfig
+		globalConfig.client = oldClient
+	}()
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"getblockcount"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+	globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(
+		`{"method":"getblockcount","params":["BTC"]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	reverseProxyHandler(servers)(w, req)
+
+	res := w.Result()
+	body, _ := io.ReadAll(res.Body)
+	log.Printf("TEST_UNIT: BackendCalls=%d Status=%d Body=%s", callCount, res.StatusCode, body)
+
+	assert.Greater(t, callCount, 0, "The failing backend should have been reached")
+
+	// The node must NOT be removed from the coin list after a failed call:
+	// it stays listed so the retry loop can pick it again (no ban).
+	ids := servers.GlobalCoinServerIDs.Get("BTC", "ids").GetArray()
+	assert.Len(t, ids, 1, "Server should remain in the coin list after a failed request")
 }
 
 func TestReverseProxy_CoinNotFound_NoRetry(t *testing.T) {
