@@ -10,6 +10,10 @@ const (
 	// RetryAttemptsDefault is the default maximum number of retry attempts for server requests
 	RetryAttemptsDefault = 3
 
+	// PingRetryAttempts is the maximum number of ping attempts per health-check cycle
+	// before a server is evicted. A server is evicted only if all attempts fail.
+	PingRetryAttempts = 3
+
 	// UpdateIntervalDefault is the default interval for server updates
 	UpdateIntervalDefault = 20 * time.Second
 

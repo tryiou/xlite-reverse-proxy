@@ -26,10 +26,17 @@ type mockTransport struct {
 	response   string
 	statusCode int
 	serverID   int
+	failCount  int
 }
 
 func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if m.shouldFail {
+		return nil, &mockError{}
+	}
+
+	// Fail the first failCount calls, then behave normally.
+	if m.failCount > 0 {
+		m.failCount--
 		return nil, &mockError{}
 	}
 
@@ -169,6 +176,74 @@ func TestServerPingSuccessValue(t *testing.T) {
 	// Verify ping value is set correctly
 	if server.ping != PingSuccessValue {
 		t.Errorf("Expected ping to be %d, got %d", PingSuccessValue, server.ping)
+	}
+}
+
+// TestServerPingWithRetriesSuccess verifies that pingWithRetries succeeds when a
+// later attempt succeeds after an initial failure.
+func TestServerPingWithRetriesSuccess(t *testing.T) {
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
+	server := &Server{
+		id:  1,
+		url: "http://test-server-retry.example.com",
+	}
+
+	mockClient := &http.Client{
+		Transport: &mockTransport{
+			response:   `{"result": 1}`,
+			statusCode: 200,
+			failCount:  1, // fail the first ping, succeed on retry
+		},
+	}
+
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
+
+	err := server.pingWithRetries()
+	if err != nil {
+		t.Errorf("Expected no error after retry, got: %v", err)
+	}
+	if server.ping != PingSuccessValue {
+		t.Errorf("Expected ping to be %d after retry, got %d", PingSuccessValue, server.ping)
+	}
+}
+
+// TestServerPingWithRetriesAllFail verifies that pingWithRetries returns an error
+// when all ping attempts fail (the server should then be evicted).
+func TestServerPingWithRetriesAllFail(t *testing.T) {
+	if globalConfig.config == nil {
+		globalConfig.config = &Config{
+			HttpTimeout: 5,
+		}
+		globalConfig.client = &http.Client{Timeout: 5 * time.Second}
+	}
+
+	server := &Server{
+		id:  1,
+		url: "http://test-server-retry-fail.example.com",
+	}
+
+	mockClient := &http.Client{
+		Transport: &mockTransport{shouldFail: true},
+	}
+
+	originalClient := globalConfig.GetClient()
+	globalConfig.client = mockClient
+	defer func() { globalConfig.client = originalClient }()
+
+	err := server.pingWithRetries()
+	if err == nil {
+		t.Errorf("Expected an error after all ping attempts failed, got nil")
+	}
+	if server.ping != PingFailureValue {
+		t.Errorf("Expected ping to be %d after all failures, got %d", PingFailureValue, server.ping)
 	}
 }
 

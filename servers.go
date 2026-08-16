@@ -479,6 +479,22 @@ func (server *Server) evict(servers *Servers, reason string) {
 	backoffLock.Unlock()
 }
 
+// pingWithRetries attempts server_GetPing up to PingRetryAttempts times, returning
+// nil on the first successful ping or the last error if all attempts fail.
+func (s *Server) pingWithRetries() error {
+	var err error
+	for attempt := 1; attempt <= PingRetryAttempts; attempt++ {
+		err = s.server_GetPing()
+		if err == nil && s.getPing() == PingSuccessValue {
+			return nil
+		}
+		if attempt < PingRetryAttempts {
+			logger.Printf(LogPrefixServerError+" ping attempt %d/%d failed, retrying", s.id, attempt, PingRetryAttempts)
+		}
+	}
+	return err
+}
+
 // UpdateAllServersData fetches the latest data (ping, heights, fees) from all registered servers concurrently.
 // After all servers have been updated, it calculates the global consensus for heights and fees.
 func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
@@ -501,7 +517,7 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 		wg.Add(1)
 		go func(s *Server) {
 			defer wg.Done()
-			err := s.server_GetPing()
+			err := s.pingWithRetries()
 			pingResults <- struct {
 				server *Server
 				err    error
