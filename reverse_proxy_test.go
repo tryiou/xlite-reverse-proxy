@@ -14,6 +14,15 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+// setTestHTTPClient installs a test HTTP client and returns a cleanup func that
+// restores the previous client, so the relay path has a working client without
+// depending on global initialization order between tests.
+func setTestHTTPClient(timeoutSec int) func() {
+	old := globalConfig.client
+	globalConfig.client = &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
+	return func() { globalConfig.client = old }
+}
+
 func TestReverseProxy_CachedEndpoints(t *testing.T) {
 	log.Printf("TEST_UNIT: Starting TestReverseProxy_CachedEndpoints")
 
@@ -130,10 +139,8 @@ func TestReverseProxy_BackendRouting(t *testing.T) {
 		MaxLogSize:              1048576, // 1MB minimum
 	}
 
-	// Initialize HTTP client for tests
-	if err := initHTTPClient(); err != nil {
-		t.Fatalf("Failed to initialize HTTP client: %v", err)
-	}
+	// Install a test HTTP client for the relay path (restored after the test).
+	defer setTestHTTPClient(5)()
 
 	// Test request to backend endpoint
 	reqBody := `{"method": "getblockcount", "params": ["BTC"]}`
@@ -197,10 +204,8 @@ func TestReverseProxy_BackendRetry(t *testing.T) {
 		MaxLogSize:              1048576, // 1MB minimum
 	}
 
-	// Initialize HTTP client for tests
-	if err := initHTTPClient(); err != nil {
-		t.Fatalf("Failed to initialize HTTP client: %v", err)
-	}
+	// Install a test HTTP client for the relay path (restored after the test).
+	defer setTestHTTPClient(5)()
 
 	req := httptest.NewRequest("POST", "/", strings.NewReader(
 		`{"method":"validmethod","params":["BTC"]}`))
@@ -305,10 +310,6 @@ func TestReverseProxy_CoinNotFound_NoRetry(t *testing.T) {
 		ConsensusThreshold:      0.6,
 		DynlistServersProviders: []string{},
 		MaxLogSize:              1048576,
-	}
-
-	if err := initHTTPClient(); err != nil {
-		t.Fatalf("Failed to initialize HTTP client: %v", err)
 	}
 
 	req := httptest.NewRequest("POST", "/", strings.NewReader(

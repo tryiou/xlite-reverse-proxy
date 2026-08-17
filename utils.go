@@ -12,34 +12,6 @@ import (
 	"github.com/valyala/fastjson"
 )
 
-// initHTTPClient initializes the HTTP client with configuration values
-func initHTTPClient() error {
-	cfg := globalConfig.GetConfig()
-	if cfg == nil {
-		return fmt.Errorf("configuration not loaded")
-	}
-
-	if cfg.HttpTimeout <= 0 {
-		return fmt.Errorf("HTTP timeout must be positive, got %d", cfg.HttpTimeout)
-	}
-
-	if cfg.MaxLogSize <= 0 {
-		return fmt.Errorf("max log size must be positive, got %d", cfg.MaxLogSize)
-	}
-
-	if cfg.RateLimit <= 0 {
-		return fmt.Errorf("rate limit must be positive, got %d", cfg.RateLimit)
-	}
-
-	if cfg.ConsensusThreshold <= 0 || cfg.ConsensusThreshold > 1 {
-		return fmt.Errorf("consensus threshold must be between 0 and 1, got %.2f", cfg.ConsensusThreshold)
-	}
-
-	// HTTP client is now managed by globalConfig, just log the initialization
-	logger.Printf("HTTP client initialized with timeout: %d seconds", cfg.HttpTimeout)
-	return nil
-}
-
 func getDefaultJSONResponse() *fastjson.Value {
 	return fastjson.MustParse(JSONResponseDefault)
 }
