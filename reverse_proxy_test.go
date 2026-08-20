@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -477,4 +478,81 @@ func TestReverseProxy_MissingRequestBody(t *testing.T) {
 	log.Printf("TEST_UNIT: Missing body | Status: %d | Body: %s", res.StatusCode, string(body))
 	assert.Equal(t, HTTPStatusBadRequest, res.StatusCode)
 	assert.JSONEq(t, `{"error": "Bad request"}`, string(body))
+}
+
+// resetLogThrottleState clears the package-level throttle maps between tests.
+func resetLogThrottleState() {
+	coinNoServerState.Lock()
+	coinNoServerState.lastLogged = make(map[string]time.Time)
+	coinNoServerState.Unlock()
+
+	canceledLogState.Lock()
+	canceledLogState.count = 0
+	canceledLogState.lastLogged = time.Time{}
+	canceledLogState.Unlock()
+}
+
+// captureLog redirects the package logger to a buffer and restores it on cleanup.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	old := logger
+	logger = log.New(buf, "", 0)
+	t.Cleanup(func() { logger = old })
+	return buf
+}
+
+func TestLogCoinNoServerThrottle(t *testing.T) {
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+	buf := captureLog(t)
+
+	first := logCoinNoServer("BTC", "[tag]", ErrCoinNotFound)
+	second := logCoinNoServer("BTC", "[tag]", ErrCoinNotFound)
+
+	assert.True(t, first, "first call should log")
+	assert.False(t, second, "immediate second call should be throttled")
+	assert.Contains(t, buf.String(), "coin BTC has no available server")
+	assert.Contains(t, buf.String(), "has no available server (coin not found in consensus)")
+}
+
+func TestLogCoinRecovered(t *testing.T) {
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+	buf := captureLog(t)
+
+	assert.True(t, logCoinNoServer("BTC", "[tag]", ErrCoinNotFound))
+	logCoinRecovered("BTC")
+
+	assert.Contains(t, buf.String(), "coin BTC recovered, service restored")
+
+	// After recovery the coin is cleared, so the next outage logs again.
+	assert.True(t, logCoinNoServer("BTC", "[tag]", ErrCoinNotFound), "should log again after recovery")
+}
+
+func TestBumpCanceledCount(t *testing.T) {
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+	buf := captureLog(t)
+
+	bumpCanceledCount()
+	bumpCanceledCount()
+	bumpCanceledCount()
+
+	// First disconnect logs immediately; subsequent ones within the window are
+	// aggregated and only flushed on the next window boundary, so the immediate
+	// burst logs a single "1 client requests canceled" line.
+	assert.Contains(t, buf.String(), "1 client requests canceled mid-request")
+}
+
+func TestFlushCanceledCountTail(t *testing.T) {
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+	buf := captureLog(t)
+
+	bumpCanceledCount()  // logs "1" immediately and resets
+	bumpCanceledCount()  // pending count of 1, within window, no log
+	flushCanceledCount() // flushes the partially-filled window
+
+	assert.Equal(t, 2, strings.Count(buf.String(), "client requests canceled mid-request"))
 }

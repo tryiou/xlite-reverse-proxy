@@ -131,14 +131,14 @@ func (servers *Servers) UpdateGlobalFees() {
 func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *Coin) (blockHash string, timeDiff float64, cached bool) {
 	getBlockHash, err := s.server_GetBlockHash(coinStr, heightInt)
 	if err != nil {
-		logger.Printf(LogPrefixServer+"_Failed to get block hash for %s at height %d: %v", s.id, coinStr, heightInt, err)
+		logPrefixed(fmt.Sprintf(LogPrefixServer, s.id), "_Failed to get block hash for %s at height %d: %v", coinStr, heightInt, err)
 		coinMap.getBlockHash = ""
 		coinMap.timeDiff = InvalidTimeDiffValue
 		return "", 0, false
 	}
 
 	if getBlockHash == "" {
-		logger.Printf(LogPrefixServer+"_Empty block hash for %s at height %d", s.id, coinStr, heightInt)
+		logPrefixed(fmt.Sprintf(LogPrefixServer, s.id), "_Empty block hash for %s at height %d", coinStr, heightInt)
 		coinMap.getBlockHash = ""
 		coinMap.timeDiff = InvalidTimeDiffValue
 		return "", 0, false
@@ -148,7 +148,7 @@ func (s *Server) updateCoinWithNewBlock(coinStr string, heightInt int, coinMap *
 	cacheService := &BlockCacheService{}
 	blockData, cached, err := cacheService.GetOrFetch(s, coinStr, getBlockHash, heightInt)
 	if err != nil {
-		logger.Printf("[server%2d] Couldn't fetch block data for %s: %s: %v", s.id, coinStr, getBlockHash, err)
+		logPrefixed(fmt.Sprintf(LogPrefixServer, s.id), " Couldn't fetch block data for %s: %s: %v", coinStr, getBlockHash, err)
 		coinMap.getBlockHash = ""
 		coinMap.timeDiff = InvalidTimeDiffValue
 		return "", 0, false
@@ -182,7 +182,7 @@ func (s *Server) updateCoinData() error {
 
 	obj, err := heightsObj.Object()
 	if err != nil {
-		logger.Printf(LogPrefixServerHeights+", error with heights object: %v", s.id, err)
+		logPrefixed(fmt.Sprintf(LogPrefixServerHeights, s.id), ", error with heights object: %v", err)
 		s.coinsMap = make(map[string]Coin)
 		return err
 	}
@@ -194,7 +194,7 @@ func (s *Server) updateCoinData() error {
 			var err error
 			heightInt, err = height.Int()
 			if err != nil {
-				logger.Printf("updateCoinData: error parsing height for coin %s: %v", coinStr, err)
+				logPrefixed(fmt.Sprintf(LogPrefixServer, s.id), " updateCoinData: error parsing height for coin %s: %v", coinStr, err)
 				heightInt = InvalidHeightValue
 			}
 		}
@@ -209,11 +209,9 @@ func (s *Server) updateCoinData() error {
 						s.hashesStorage[coinStr] = make(map[int]string)
 					}
 					s.hashesStorage[coinStr][heightInt] = blockHash
-					// logger.Printf("[server%d]_New_Block %s | height: %d | hash: %s | timediff: %.2fs | cached: %t",
-					// 	s.id, coinStr, heightInt, blockHash, timeDiff, cached)
-					base := fmt.Sprintf("[server%2d]_New_Block %-5s", s.id, coinStr)
-					logger.Printf("%-25s | height: %9d | hash: %-25.25s... | timediff: %9.2fs | cached: %-5t",
-						base, heightInt, blockHash, timeDiff, cached)
+					logPrefixed(fmt.Sprintf(LogPrefixServer, s.id),
+						" New_Block %-5s | height: %9d | hash: %-25.25s... | timediff: %9.2fs | cached: %t",
+						coinStr, heightInt, blockHash, timeDiff, cached)
 				}
 			} else {
 				coinMap.getBlockHash = ""
@@ -228,7 +226,7 @@ func (s *Server) updateCoinData() error {
 	if feesObj != nil && feesObj.Type() == fastjson.TypeObject {
 		obj, err := feesObj.Object()
 		if err != nil {
-			logger.Printf("updateCoinData, error with fees object: %v", err)
+			logPrefixed(fmt.Sprintf(LogPrefixServer, s.id), " updateCoinData: error with fees object: %v", err)
 			return err
 		}
 		obj.Visit(func(coin []byte, fee *fastjson.Value) {
@@ -252,7 +250,7 @@ func (s *Server) updateCoinData() error {
 func (servers *Servers) updateCoinDataForAllServers() {
 	for _, server := range servers.Slice {
 		if err := server.updateCoinData(); err != nil {
-			logger.Printf(LogPrefixServerError+" failed to update coin data: %v", server.id, err)
+			logPrefixed(fmt.Sprintf(LogPrefixServerError, server.id), " failed to update coin data: %v", err)
 		}
 	}
 }
@@ -264,7 +262,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 1. Build a map of heights for each coin from all servers.
 	heightsMap, err := buildCoinHeightsMap(servers)
 	if err != nil {
-		logger.Printf(" error extracting results: %v", err)
+		logPrefixed(LogPrefixServers, " error extracting results: %v", err)
 		servers.GlobalHeights = getDefaultJSONResponse()
 		servers.GlobalCoinServerIDs = getEmptyJSONResponse()
 		return
@@ -282,7 +280,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 5. Create the JSON response for servers in consensus.
 	commonHeightServersJSON, err := createCommonHeightServersJSON(commonHeightServers)
 	if err != nil {
-		logger.Printf(LogPrefixError+" creating JSON for common height servers: %v", err)
+		logPrefixed(LogPrefixError, " creating JSON for common height servers: %v", err)
 		servers.GlobalHeights = getDefaultJSONResponse()
 		servers.GlobalCoinServerIDs = getEmptyJSONResponse()
 		return
@@ -291,7 +289,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 6. Create the global heights JSON response.
 	globalHeightsJSON, err := createGlobalHeightsJSON(mostCommonHeightsRanges)
 	if err != nil {
-		logger.Printf(LogPrefixError+" creating JSON for GGet heights: %v", err)
+		logPrefixed(LogPrefixError, " creating JSON for GGet heights: %v", err)
 		servers.GlobalHeights = getDefaultJSONResponse()
 		servers.GlobalCoinServerIDs = getEmptyJSONResponse()
 		return
@@ -301,7 +299,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 7. Sort the coin server IDs map alphabetically by coin.
 	sortedGlobalCoinServerIDsJSON, err := sortGlobalCoinServerIDs(commonHeightServersJSON)
 	if err != nil {
-		logger.Printf(" error sorting coins map: %v", err)
+		logPrefixed(LogPrefixServers, " error sorting coins map: %v", err)
 		servers.GlobalCoinServerIDs = getEmptyJSONResponse()
 	}
 	servers.GlobalCoinServerIDs = sortedGlobalCoinServerIDsJSON
@@ -309,7 +307,7 @@ func (servers *Servers) UpdateGlobalHeights() {
 	// 9. Find and remove servers with non-consensus block hashes.
 	nonConsensusServersMap := FindServersFailingHashConsensus(servers)
 	if len(nonConsensusServersMap) > 0 {
-		logger.Printf("getGlobalHeights, nonConsensusServersMap = %v", nonConsensusServersMap)
+		logPrefixed(LogPrefixServers, " nonConsensusServersMap = %v", nonConsensusServersMap)
 		servers.removeNonConsensusServersFromGlobalList(nonConsensusServersMap)
 	}
 }
@@ -359,7 +357,7 @@ func (servers *Servers) RemoveServerFromGlobalCoinList(coin string, id int) {
 
 	// Update the "ids" field in coinInfo.
 	coinInfo.Set("ids", newArrayValue)
-	logger.Printf("Removed ID %d from coin '%s' IDs: %v\n", id, coin, updatedIDsForLog)
+	logPrefixed(LogPrefixServers, " Removed ID %d from coin '%s' IDs: %v", id, coin, updatedIDsForLog)
 }
 
 // removeNonConsensusServersFromGlobalList removes server IDs from the global list for a given coin
@@ -390,13 +388,13 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 				}
 
 				coinInfo.Set("ids", newIDsValue)
-				logger.Printf("Updated 'ids' array for coin: %s %v\n", coin, newIDsValue)
+				logPrefixed(LogPrefixServers, " Updated 'ids' array for coin: %s %v", coin, newIDsValue)
 
 				// Delete the non-consensus coin(s) from each affected server's coinMap.
 				// This operation doesn't need the servers lock since we're only modifying individual server data
 				for _, serverID := range serverIDs {
 					if server, exists := servers.GetServerByID(serverID); exists {
-						logger.Printf(LogPrefixServerError+" Removing %s from coinMap\n", server.id, coin)
+						logPrefixed(fmt.Sprintf(LogPrefixServerError, server.id), " Removing %s from coinMap", coin)
 						delete(server.coinsMap, coin)
 					}
 				}
@@ -459,7 +457,7 @@ func computeBackoff(failures int) time.Duration {
 
 // evict removes a server from global maps, clears its data, and applies exponential backoff.
 func (server *Server) evict(servers *Servers, reason string) {
-	logger.Printf(LogPrefixServerError+" %s, evicting", server.id, reason)
+	logPrefixed(fmt.Sprintf(LogPrefixServerError, server.id), " %s, evicting", reason)
 	for coin := range server.coinsMap {
 		servers.RemoveServerFromGlobalCoinList(coin, server.id)
 	}
@@ -489,7 +487,8 @@ func (s *Server) pingWithRetries() error {
 			return nil
 		}
 		if attempt < PingRetryAttempts {
-			logger.Printf(LogPrefixServerError+" ping attempt %d/%d failed, retrying", s.id, attempt, PingRetryAttempts)
+			logPrefixed(fmt.Sprintf(LogPrefixServerError, s.id), " ping attempt %d/%d failed, retrying", attempt, PingRetryAttempts)
+			time.Sleep(PingRetryDelay)
 		}
 	}
 	return err
@@ -532,7 +531,7 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 		if result.err == nil && result.server.ping == PingSuccessValue {
 			healthyServers = append(healthyServers, result.server)
 		} else {
-			logger.Printf(LogPrefixServerError+" ping failed: %v", result.server.id, result.err)
+			logPrefixed(fmt.Sprintf(LogPrefixServerError, result.server.id), " ping failed: %v", result.err)
 			pingFailedServers = append(pingFailedServers, result.server)
 		}
 	}
@@ -572,9 +571,9 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 			}{server: s, heights: getheights, err: err}
 
 			if err != nil {
-				logger.Printf(LogPrefixServerError+" getting heights: %v", s.id, err)
+				logPrefixed(fmt.Sprintf(LogPrefixServerError, s.id), " getting heights: %v", err)
 			} else {
-				logger.Printf(LogPrefixServerHeights+" : %v %v", s.id, getheights, elapsedTimer)
+				logPrefixed(fmt.Sprintf(LogPrefixServerHeights, s.id), " %v "+LogExecTimerFormat, getheights, formatDuration(elapsedTimer))
 			}
 		}(server)
 	}
@@ -594,7 +593,7 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 			}{server: s, fees: getfees, err: err}
 
 			if err != nil {
-				logger.Printf(LogPrefixServerError+" getting fees: %v", s.id, err)
+				logPrefixed(fmt.Sprintf(LogPrefixServerError, s.id), " getting fees: %v", err)
 			}
 		}(server)
 	}
@@ -647,9 +646,9 @@ func (servers *Servers) UpdateAllServersData(wg *sync.WaitGroup) {
 	servers.UpdateGlobalFees()
 	servers.UpdateGlobalHeights()
 
-	logger.Printf("|SERVERS|_Heights : %v", servers.GlobalHeights)
-	logger.Printf("|SERVERS|_Fees    : %v", servers.GlobalFees)
-	logger.Printf("|SERVERS|_Srv_IDs : %v", servers.GlobalCoinServerIDs)
+	logPrefixed(LogPrefixServers, "Heights %v", servers.GlobalHeights)
+	logPrefixed(LogPrefixServers, "Fees    %v", servers.GlobalFees)
+	logPrefixed(LogPrefixServers, "Srv_IDs %v", servers.GlobalCoinServerIDs)
 }
 
 // buildCoinHeightsMap extracts block heights for each coin from all healthy servers
@@ -691,13 +690,13 @@ func (s *BlockCacheService) GetOrFetch(server *Server, coin, hash string, height
 func (s *BlockCacheService) FetchAndCacheBlock(server *Server, coin, hash string, height int) (*BlockCache, error) {
 	blockData, err := server.server_GetBlock(coin, hash)
 	if err != nil {
-		logger.Printf("[server%2d] Failed fetching block %s for coin %s: %v", server.id, hash, coin, err)
+		logPrefixed(fmt.Sprintf(LogPrefixServer, server.id), " Failed fetching block %s for coin %s: %v", hash, coin, err)
 		return nil, err
 	}
 
 	timestamp, err := blockData.Get("time").Int64()
 	if err != nil {
-		logger.Printf("[server%2d] Invalid timestamp in block %s for coin %s: %v", server.id, hash, coin, err)
+		logPrefixed(fmt.Sprintf(LogPrefixServer, server.id), " Invalid timestamp in block %s for coin %s: %v", hash, coin, err)
 		return nil, err
 	}
 
@@ -755,7 +754,7 @@ func CollectBlockHashVotesForConsensusHeight(servers *Servers) map[string]map[st
 			serverID, _ := idValue.Int()
 			server, exists := servers.GetServerByID(serverID)
 			if !exists {
-				logger.Printf("Cannot find server with ID %d for coin %s", serverID, coin)
+				logPrefixed(LogPrefixServers, " Cannot find server with ID %d for coin %s", serverID, coin)
 				continue
 			}
 
@@ -769,7 +768,7 @@ func CollectBlockHashVotesForConsensusHeight(servers *Servers) map[string]map[st
 			if currentHash == "" {
 				hash, err := server.server_GetBlockHash(coin, consensusHeight)
 				if err != nil {
-					logger.Printf("CollectBlockHashVotes: error from server_GetBlockHash for server %d, coin %s: %v", server.id, coin, err)
+					logPrefixed(LogPrefixServers, " CollectBlockHashVotes: error from server_GetBlockHash for server %d, coin %s: %v", server.id, coin, err)
 					currentHash = "" // Store empty to prevent re-fetch
 				} else {
 					currentHash = hash
@@ -952,7 +951,7 @@ func calculateConsensusFees(counts map[string]map[string]int) *fastjson.Value {
 				parts := strings.Split(identifier, ":")
 				value, err := strconv.ParseFloat(parts[1], 64)
 				if err != nil {
-					logger.Printf("Couldn't parse fee value %s: %v", parts[1], err)
+					logPrefixed(LogPrefixServers, " Couldn't parse fee value %s: %v", parts[1], err)
 					continue
 				}
 				consensusData[parts[0]] = value

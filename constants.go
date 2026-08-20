@@ -14,6 +14,10 @@ const (
 	// before a server is evicted. A server is evicted only if all attempts fail.
 	PingRetryAttempts = 3
 
+	// PingRetryDelay is the pause between consecutive ping retry attempts
+	// in the health-check cycle, preventing rapid-fire requests to a slow backend.
+	PingRetryDelay = 1 * time.Second
+
 	// UpdateIntervalDefault is the default interval for server updates
 	UpdateIntervalDefault = 20 * time.Second
 
@@ -34,6 +38,15 @@ const (
 
 	// BackoffMaxInterval is the maximum backoff interval for server failures
 	BackoffMaxInterval = 5 * time.Minute
+
+	// CoinOutageLogInterval is the minimum gap between repeated "coin has no
+	// available server" log lines for the same coin, preventing log floods
+	// during a backend outage.
+	CoinOutageLogInterval = 30 * time.Second
+
+	// CanceledLogInterval is the aggregation window for logging client
+	// disconnects (context canceled) as a single count line.
+	CanceledLogInterval = 5 * time.Second
 )
 
 // Constants for HTTP and networking
@@ -259,8 +272,17 @@ const (
 	// LogPrefixTestUnit is the test unit log prefix
 	LogPrefixTestUnit = "TEST_UNIT:"
 
-	// LogExecTimerFormat is the format for execution timing logs
-	LogExecTimerFormat = "exec_timer:%s"
+	// LogPrefixConfig is the log prefix for configuration operations
+	LogPrefixConfig = "[config]"
+
+	// LogPrefixColumnWidth is the fixed width that every log prefix is padded to
+	// so all message bodies start at the same column. The longest rendered prefix
+	// is "[server99]_Heights" (18 chars) plus three trailing spaces.
+	LogPrefixColumnWidth = 21
+
+	// LogExecTimerFormat is the format for execution timing logs, with the
+	// duration value right-aligned for a consistent column.
+	LogExecTimerFormat = "exec_timer: %8s"
 )
 
 // Constants for EXR (Exchange Router) functionality

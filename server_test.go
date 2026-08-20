@@ -510,26 +510,10 @@ func TestServerLoggingUtilities(t *testing.T) {
 
 	logServerError(123, "test operation", mockError{})
 	output := logOutput.String()
-	if !strings.Contains(output, "[server123]_error test operation failed") {
+	if !strings.Contains(output, "[server123]_error") || !strings.Contains(output, "test operation failed") {
 		t.Errorf("Expected log output to contain server error, got: %s", output)
 	}
 	if !strings.Contains(output, "mock error for testing") {
 		t.Errorf("Expected log output to contain error message, got: %s", output)
-	}
-
-	// Test logServerSuccess
-	logOutput.Reset()
-	logServerSuccess(456, "test operation")
-	output = logOutput.String()
-	if !strings.Contains(output, "[server456] test operation successful") {
-		t.Errorf("Expected log output to contain server success, got: %s", output)
-	}
-
-	// Test logServerSuccess with details
-	logOutput.Reset()
-	logServerSuccess(789, "test operation", "with details")
-	output = logOutput.String()
-	if !strings.Contains(output, "[server789] test operation successful: with details") {
-		t.Errorf("Expected log output to contain server success with details, got: %s", output)
 	}
 }

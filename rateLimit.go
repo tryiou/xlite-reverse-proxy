@@ -80,7 +80,7 @@ func limit(next http.Handler) http.Handler {
 		} else {
 			ip, _, err = net.SplitHostPort(r.RemoteAddr)
 			if err != nil {
-				logger.Printf(LogPrefixError+"_error extracting client ip from request: %v", err)
+				logPrefixed(LogPrefixError, " extracting client ip from request: %v", err)
 				return
 			}
 		}

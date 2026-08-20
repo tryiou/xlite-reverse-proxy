@@ -50,8 +50,9 @@ type BlockCache struct {
 type RequestData struct {
 	Method string        `json:"method"`
 	Params []interface{} `json:"params"`
-	Ip     string
-	Path   string
+	Ip     string        `json:"-"`
+	Path   string        `json:"-"`
+	Coin   string        `json:"-"`
 }
 
 type CoinData struct {

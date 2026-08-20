@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -33,48 +34,41 @@ func makeErrorResponse(message string, details ...string) *fastjson.Value {
 	return fastjson.MustParse(fmt.Sprintf(JSONResponseServerErrorTemplate, message))
 }
 
-func logError(operation, message string, err error) {
-	logger.Printf(LogPrefixError+" %s: %v", operation, err)
+// relayTag builds a consistent context tag stamped on every retry-sequence line.
+// All slots are rendered at fixed widths (empty coin becomes "-") so every tag is
+// exactly the same length and the closing bracket aligns across lines.
+// serverID < 0 means the target server is not yet known for this attempt.
+func relayTag(ip, coin, method string) string {
+	if coin == "" {
+		coin = "-"
+	}
+	return fmt.Sprintf("[IP: %-15.15s coin: %-10s method: %-18s]", ip, coin, method)
 }
 
-// relayTag builds a consistent context tag stamped on every retry-sequence line.
-// serverID < 0 means the target server is not yet known for this attempt.
-func relayTag(ip, coin, method, path string, serverID int) string {
+// sourceField returns a fixed-width 10-char source descriptor (leading space
+// included) so every message body starts at the same column.
+func sourceField(source string) string {
+	return fmt.Sprintf(" %-9s", source)
+}
+
+// serverTag returns the fixed-width source field for the target server (blank
+// when the target server is not known).
+func serverTag(serverID int) string {
 	if serverID < 0 {
-		return fmt.Sprintf("[IP:%s coin:%s method:%s path:%s]", ip, coin, method, path)
+		return sourceField("")
 	}
-	return fmt.Sprintf("[IP:%s coin:%s method:%s path:%s server[%d]]", ip, coin, method, path, serverID)
+	return sourceField(fmt.Sprintf("server[%d]", serverID))
 }
 
 // logRelayError logs a relay/retry failure carrying full client+server context.
-func logRelayError(tag, operation string, err error) {
-	logger.Printf(LogPrefixRevProxy+" %s %s failed: %v", tag, operation, err)
+func logRelayError(tag, operation string, serverID int, err error) {
+	logPrefixed(LogPrefixRevProxy, " %s%s %s failed: %v", tag, serverTag(serverID), operation, err)
 }
 
 func writeErrorResponse(w http.ResponseWriter, status int, message string, details ...string) {
 	w.WriteHeader(status)
 	response := makeErrorResponse(message, details...)
 	_ = WriteJSONResponse(w, response)
-}
-
-// Add request context to error responses
-type RequestContext struct {
-	IP        string
-	Method    string
-	Path      string
-	Timestamp time.Time
-	UserAgent string
-}
-
-func createRequestContext(r *http.Request) RequestContext {
-	ip := extractIPFromRequest(r)
-	return RequestContext{
-		IP:        ip,
-		Method:    r.Method,
-		Path:      r.URL.Path,
-		Timestamp: time.Now(),
-		UserAgent: r.Header.Get("User-Agent"),
-	}
 }
 
 func extractIPFromRequest(r *http.Request) string {
@@ -91,14 +85,9 @@ func extractIPFromRequest(r *http.Request) string {
 	return ip
 }
 
-func logErrorWithContext(ctx RequestContext, operation string, err error) {
-	logger.Printf(LogPrefixError+" [IP:%s Method:%s Path:%s UA:%s] %s: %v",
-		ctx.IP, ctx.Method, ctx.Path, ctx.UserAgent, operation, err)
-}
-
 // writeGenericErrorResponse writes a generic error response to the client while logging detailed error internally
 func writeGenericErrorResponse(w http.ResponseWriter, status int, genericMsg string, operation string, err error) {
-	logger.Printf(LogPrefixError+" %s: %v", operation, err)
+	logPrefixed(LogPrefixError, " %s: %v", operation, err)
 	w.WriteHeader(status)
 	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, genericMsg))
 	_ = WriteJSONResponse(w, response)
@@ -119,7 +108,7 @@ func writeServerErrorResponseQuiet(w http.ResponseWriter, operation string, err 
 
 // writeBadRequestResponse writes a bad request error response
 func writeBadRequestResponse(w http.ResponseWriter, operation string, err error) {
-	logger.Printf(LogPrefixError+" %s: %v", operation, err)
+	logPrefixed(LogPrefixError, " %s: %v", operation, err)
 	w.WriteHeader(HTTPStatusBadRequest)
 	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, ErrorMessageBadRequest))
 	_ = WriteJSONResponse(w, response)
@@ -127,20 +116,20 @@ func writeBadRequestResponse(w http.ResponseWriter, operation string, err error)
 
 // writeNotFoundResponse writes a not found error response
 func writeNotFoundResponse(w http.ResponseWriter) {
-	logger.Print(LogPrefixError + " " + ErrorMessageNotFound)
+	logPrefixed(LogPrefixError, " "+ErrorMessageNotFound)
 	w.WriteHeader(HTTPStatusNotFound)
 	response := fastjson.MustParse(fmt.Sprintf(`{"error": "%s"}`, ErrorMessageNotFound))
 	_ = WriteJSONResponse(w, response)
 }
 
-func logCachedRequest(ip, endpoint string, start time.Time) {
+func logCachedRequest(tag string, start time.Time) {
 	elapsed := time.Since(start)
-	logger.Printf(LogPrefixRevProxy+" %s request %s relayed OK from cache, "+LogExecTimerFormat, ip, endpoint, elapsed)
+	logPrefixed(LogPrefixRevProxy, " %s%s relayed OK, "+LogExecTimerFormat, tag, sourceField("cache"), formatDuration(elapsed))
 }
 
 func writeResponseChecked(w http.ResponseWriter, resp *fastjson.Value) error {
 	if err := WriteJSONResponse(w, resp); err != nil {
-		logger.Printf("*error writing response: %v", err)
+		logPrefixed(LogPrefixError, " writing response: %v", err)
 		return err
 	}
 	return nil
@@ -173,7 +162,7 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-			logCachedRequest(requestData.Ip, "servers", startTimer)
+			logCachedRequest(relayTag(requestData.Ip, "", requestData.Method), startTimer)
 			return
 
 		case req.URL.Path == "/heights" || req.URL.Path == "/height" || requestData.Method == "heights" || requestData.Method == "height":
@@ -185,7 +174,7 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-			logCachedRequest(requestData.Ip, "heights", startTimer)
+			logCachedRequest(relayTag(requestData.Ip, "", requestData.Method), startTimer)
 			return
 
 		case req.URL.Path == "/fees" || requestData.Method == "fees":
@@ -197,7 +186,7 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 			if err := writeResponseChecked(rw, response); err != nil {
 				return
 			}
-			logCachedRequest(requestData.Ip, "fees", startTimer)
+			logCachedRequest(relayTag(requestData.Ip, "", requestData.Method), startTimer)
 			return
 
 		case req.URL.Path == "/ping" || requestData.Method == "ping":
@@ -206,7 +195,8 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 				return
 			}
 			elapsedTimer := time.Since(startTimer)
-			logger.Printf(LogPrefixRevProxy+" %s request ping relayed OK, "+LogExecTimerFormat+"\n", requestData.Ip, elapsedTimer)
+			logPrefixed(LogPrefixRevProxy, " %s%s relayed OK, "+LogExecTimerFormat,
+				relayTag(requestData.Ip, "", requestData.Method), serverTag(-1), formatDuration(elapsedTimer))
 			return
 
 		default:
@@ -220,6 +210,7 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 				writeBadRequestResponse(rw, "extractCoin", err)
 				return
 			}
+			requestData.Coin = coin
 
 			server, err := retryWithRandomValidServer(rw, req, servers, coin, &requestData, RetryAttemptsDefault)
 			if err != nil {
@@ -234,7 +225,7 @@ func reverseProxyHandler(servers *Servers) http.HandlerFunc {
 }
 
 func reverseProxy(port int, servers *Servers) {
-	logger.Print("ReverseProxy started, Listening on ", port)
+	logPrefixed(LogPrefixRevProxy, " ReverseProxy started, Listening on %d", port)
 
 	srv := &http.Server{
 		Addr:     ":" + strconv.Itoa(port),
@@ -244,7 +235,8 @@ func reverseProxy(port int, servers *Servers) {
 
 	err := srv.ListenAndServe()
 	if err != nil {
-		logger.Fatalf("*error reverseProxy: %v", err)
+		logPrefixed(LogPrefixError, " reverseProxy: %v", err)
+		os.Exit(1)
 	}
 }
 
@@ -255,19 +247,24 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	}
 	var lastError error
 	var actualAttempts int
+	var permanentStop bool
 
 	for i := 0; i < maxRetries; i++ {
 		actualAttempts = i + 1
 
 		randomValidServerID, err := servers.GetRandomValidServerID(coin)
 		if err != nil {
-			logRelayError(relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, -1),
-				"getRandomValidServer", fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
 			lastError = err
-			// Permanent error: coin not found or no servers for coin — don't retry
+			// Permanent error: coin not found or no servers for coin — don't retry.
+			// Emit a single throttled "no server" event; the exhausted summary is
+			// skipped for this path (permanentStop) to avoid doubled log lines.
 			if errors.Is(err, ErrCoinNotFound) || errors.Is(err, ErrServerIDsArrayNotFound) || errors.Is(err, ErrNoServerForCoin) {
+				logCoinNoServer(coin, relayTag(requestData.Ip, coin, requestData.Method), err)
+				permanentStop = true
 				break
 			}
+			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+				"getRandomValidServer", -1, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
 			continue
 		}
 
@@ -277,16 +274,16 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		locks.servers.RUnlock()
 
 		if !exists {
-			logRelayError(relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, randomValidServerID),
-				"GetServerByID", fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, fmt.Errorf(ErrorMessageServerIDNotFound, randomValidServerID)))
+			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+				"GetServerByID", randomValidServerID, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, fmt.Errorf(ErrorMessageServerIDNotFound, randomValidServerID)))
 			lastError = fmt.Errorf(ErrorMessageServerNotFound)
 			continue
 		}
 
 		err = updateRequestHeaders(req, &server, *requestData)
 		if err != nil {
-			logRelayError(relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, server.id),
-				"updateRequestHeaders", fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
+			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+				"updateRequestHeaders", server.id, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
 			lastError = err
 			continue
 		}
@@ -294,8 +291,7 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		resp, err := handleOriginServerResponse(req, &server)
 		if err != nil {
 			if strings.Contains(err.Error(), "context canceled") {
-				logRelayError(relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, server.id),
-					"handleOriginServerResponse", fmt.Errorf("attempt %d/%d context canceled: %w", i+1, maxRetries, err))
+				bumpCanceledCount()
 				return nil, err
 			}
 
@@ -305,13 +301,13 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			lastError = err
 
 			if strings.Contains(err.Error(), " status: 4") {
-				logRelayError(relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, server.id),
-					"handleOriginServerResponse", fmt.Errorf("attempt %d/%d (4xx, stopping retries): %w", i+1, maxRetries, err))
+				logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+					"handleOriginServerResponse", server.id, fmt.Errorf("attempt %d/%d (4xx, stopping retries): %w", i+1, maxRetries, err))
 				return nil, err
 			}
 
-			logRelayError(relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, server.id),
-				"handleOriginServerResponse", fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
+			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+				"handleOriginServerResponse", server.id, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
 			continue
 		}
 
@@ -324,12 +320,15 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	// All retries exhausted
 	// Don't write response here - let the caller handle it to avoid double responses
 	// Provide more context in the error message
-	tag := relayTag(requestData.Ip, coin, requestData.Method, requestData.Path, -1)
-	if lastError != nil {
-		logger.Printf(LogPrefixRevProxy+" %s ALL RETRIES EXHAUSTED %d/%d, lastErr: %v", tag, actualAttempts, maxRetries, lastError)
+	tag := relayTag(requestData.Ip, coin, requestData.Method)
+	if permanentStop {
 		return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s: %w", actualAttempts, maxRetries, coin, lastError)
 	}
-	logger.Printf(LogPrefixRevProxy+" %s ALL RETRIES EXHAUSTED %d/%d (no last error captured)", tag, actualAttempts, maxRetries)
+	if lastError != nil {
+		logPrefixed(LogPrefixRevProxy, " %s%s ALL RETRIES EXHAUSTED %d/%d, lastErr: %v", tag, serverTag(-1), actualAttempts, maxRetries, lastError)
+		return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s: %w", actualAttempts, maxRetries, coin, lastError)
+	}
+	logPrefixed(LogPrefixRevProxy, " %s%s ALL RETRIES EXHAUSTED %d/%d (no last error captured)", tag, serverTag(-1), actualAttempts, maxRetries)
 	return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s", actualAttempts, maxRetries, coin)
 }
 
@@ -622,14 +621,10 @@ func parseAndNormalizeResponse(responseBody []byte, server *Server) (*fastjson.V
 
 // logRequest logs the request details.
 func logRequest(server Server, requestData *RequestData, reqURL *url.URL, startTimer time.Time) {
-	var bufParams interface{}
-	if len(requestData.Params) > 0 {
-		bufParams = requestData.Params[0]
-	} else {
-		bufParams = "[]"
-	}
 	elapsedTimer := time.Since(startTimer)
-	logger.Printf(LogPrefixRevProxy+" %s request %s %s relayed OK to server[%d], "+LogExecTimerFormat+"\n", requestData.Ip, requestData.Method, bufParams, server.id, elapsedTimer)
+	logCoinRecovered(requestData.Coin)
+	tag := relayTag(requestData.Ip, requestData.Coin, requestData.Method)
+	logPrefixed(LogPrefixRevProxy, " %s%s relayed OK, "+LogExecTimerFormat, tag, serverTag(server.id), formatDuration(elapsedTimer))
 }
 
 // isPathAccepted checks if the request path is in the acceptedPaths list.

@@ -109,7 +109,6 @@ func (s *Server) server_GetBlock(coin string, blockHash string) (*fastjson.Value
 		return nil, NewServerError(s.id, "getblock", fmt.Errorf("coin %s: invalid result type", coin))
 	}
 
-	// logServerSuccess(s.id, "getblock", fmt.Sprintf("coin %s, hash %s", coin, blockHash))
 	return jsonResult, nil
 }
 
@@ -148,7 +147,6 @@ func (s *Server) server_GetBlockHash(coin string, height int) (string, error) {
 	}
 
 	hash := removeNonPrintableChars(result)
-	// logServerSuccess(s.id, "getblockhash", fmt.Sprintf("coin %s height %d: %s", coin, height, hash))
 	return hash, nil
 }
 
@@ -168,7 +166,6 @@ func (s *Server) server_GetFees() error {
 		return NewServerError(s.id, "parse JSON", err)
 	}
 	s.getfees = jsonResp
-	// logServerSuccess(s.id, "getfees")
 	return nil
 }
 
@@ -203,7 +200,6 @@ func (s *Server) server_GetHeights() error {
 	}
 	s.getheights = jsonResp
 	s.sortGetHeightsKeys()
-	// logServerSuccess(s.id, "getheights")
 	return nil
 }
 
@@ -345,8 +341,6 @@ func (s *Server) makeHTTPRequestWithContext(ctx context.Context, httpMethod, pay
 		return nil, NewServerError(s.id, "read response body", err)
 	}
 
-	// elapsed := time.Since(reqTimer)
-	// logger.Printf(LogPrefixServer+" server[%d] HTTP request to %s successful (%v, %d bytes)", s.id, s.id, url, elapsed, len(body))
 	return body, nil
 }
 

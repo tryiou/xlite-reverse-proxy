@@ -79,14 +79,5 @@ func removeNonPrintableChars(s string) string {
 
 // logServerError logs server-related errors with consistent formatting
 func logServerError(serverID int, operation string, err error) {
-	logger.Printf(LogPrefixServerError+" %s failed: %v", serverID, operation, err)
-}
-
-// logServerSuccess logs server-related successes with consistent formatting
-func logServerSuccess(serverID int, operation string, details ...string) {
-	if len(details) > 0 {
-		logger.Printf(LogPrefixServer+" %s successful: %s", serverID, operation, details[0])
-	} else {
-		logger.Printf(LogPrefixServer+" %s successful", serverID, operation)
-	}
+	logPrefixed(fmt.Sprintf(LogPrefixServerError, serverID), " %s failed: %v", operation, err)
 }

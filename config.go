@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 
@@ -46,10 +45,10 @@ type Config struct {
 // If the file doesn't exist, it creates a default one.
 func newConfig(configFile string) (*Config, error) {
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		log.Printf("Config file %q does not exist. Creating default config.", configFile)
+		logPrefixed(LogPrefixConfig, " Config file %q does not exist. Creating default config.", configFile)
 		return createDefaultConfig(configFile)
 	}
-	log.Printf("Loading existing config from %q.", configFile)
+	logPrefixed(LogPrefixConfig, " Loading existing config from %q.", configFile)
 	cfg, err := loadConfig(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration from %s: %w", configFile, err)
@@ -114,7 +113,7 @@ func createDefaultConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("failed to write default config to file %s: %w", configFile, err)
 	}
 
-	log.Printf("Default config created and written to file: %s", configFile)
+	logPrefixed(LogPrefixConfig, " Default config created and written to file: %s", configFile)
 	return defaultConfig, nil
 }
 
@@ -180,6 +179,6 @@ func loadConfig(filePath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse YAML in config file %s: %w", filePath, err)
 	}
 
-	log.Printf("Config loaded from file: %s", filePath)
+	logPrefixed(LogPrefixConfig, " Config loaded from file: %s", filePath)
 	return &cfg, nil
 }

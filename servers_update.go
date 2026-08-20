@@ -16,10 +16,10 @@ import (
 
 // fetchURLContent performs an HTTP GET request to the specified URL and returns the response body.
 func fetchURLContent(url string) ([]byte, error) {
-	logger.Printf("|SERVERS_UPDATE| Fetching content from URL: %s", url)
+	logPrefixed(LogPrefixServerUpdate, " Fetching content from URL: %s", url)
 	resp, err := http.Get(url)
 	if err != nil {
-		logger.Printf("|SERVERS_UPDATE| Error fetching from URL %s: %v", url, err)
+		logPrefixed(LogPrefixServerUpdate, " Error fetching from URL %s: %v", url, err)
 		return nil, fmt.Errorf("failed to fetch from URL %s: %w", url, err)
 	}
 	defer resp.Body.Close()
@@ -30,11 +30,11 @@ func fetchURLContent(url string) ([]byte, error) {
 
 	content, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Printf("|SERVERS_UPDATE| Error reading response body from URL %s: %v", url, err)
+		logPrefixed(LogPrefixServerUpdate, " Error reading response body from URL %s: %v", url, err)
 		return nil, fmt.Errorf("failed to read response body from %s: %w", url, err)
 	}
 
-	logger.Printf("|SERVERS_UPDATE| Successfully fetched content from URL: %s", url)
+	logPrefixed(LogPrefixServerUpdate, " Successfully fetched content from URL: %s", url)
 	return content, nil
 }
 
@@ -69,7 +69,7 @@ func parseINIConfig(config string) map[string]map[string]string {
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.Printf("|SERVERS_UPDATE| Error scanning config string: %v", err)
+		logPrefixed(LogPrefixServerUpdate, " Error scanning config string: %v", err)
 	}
 
 	return configMap
@@ -112,7 +112,7 @@ func findMissingPlugins(requiredPlugins, availablePlugins []string) []string {
 // The providerURL itself is also included as a valid server.
 func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 	fullURL := providerURL + "/xrs/xrshowconfigs"
-	logger.Printf("|SERVERS_UPDATE| Fetching remote server list from: %s", fullURL)
+	logPrefixed(LogPrefixServerUpdate, " Fetching remote server list from: %s", fullURL)
 
 	rawContent, err := fetchURLContent(fullURL)
 	if err != nil {
@@ -121,7 +121,7 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 
 	var response JsonResponse
 	if err := json.Unmarshal(rawContent, &response); err != nil {
-		logger.Printf("|SERVERS_UPDATE| Error unmarshalling initial JSON response: %v", err)
+		logPrefixed(LogPrefixServerUpdate, " Error unmarshalling initial JSON response: %v", err)
 		return nil, fmt.Errorf("failed to unmarshal initial response: %w", err)
 	}
 
@@ -132,7 +132,7 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 	// The 'result' field is a JSON string that needs to be unmarshalled separately.
 	var remoteServers []JsonElement
 	if err := json.Unmarshal([]byte(response.Result), &remoteServers); err != nil {
-		logger.Printf("|SERVERS_UPDATE| Error unmarshalling nested result JSON: %v", err)
+		logPrefixed(LogPrefixServerUpdate, " Error unmarshalling nested result JSON: %v", err)
 		return nil, fmt.Errorf("failed to unmarshal nested server list: %w", err)
 	}
 
@@ -149,7 +149,7 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 		configMap := parseINIConfig(serverInfo.Config)
 		mainSection, ok := configMap["Main"]
 		if !ok || mainSection["plugins"] == "" || mainSection["host"] == "" || mainSection["port"] == "" {
-			logger.Printf("|SERVERS_UPDATE| Server %d: Incomplete config, skipping. NodePubKey=%s", serverID, serverInfo.NodePubKey)
+			logPrefixed(LogPrefixServerUpdate, " Server %d: Incomplete config, skipping. NodePubKey=%s", serverID, serverInfo.NodePubKey)
 			notReadyCount++
 			continue
 		}
@@ -158,17 +158,17 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 		host := "http://" + mainSection["host"] + ":" + mainSection["port"]
 
 		if allPluginsPresent(requiredPlugins, availablePlugins) {
-			logger.Printf("|SERVERS_UPDATE| Server %d: READY FOR XLITE. Host=%s, NodePubKey=%s", serverID, host, serverInfo.NodePubKey)
+			logPrefixed(LogPrefixServerUpdate, " Server %d: READY FOR XLITE. Host=%s, NodePubKey=%s", serverID, host, serverInfo.NodePubKey)
 			validServerConfigs = append(validServerConfigs, ServerConfig{URL: host, EXR: true})
 			readyCount++
 		} else {
 			notReadyCount++
 			missing := findMissingPlugins(requiredPlugins, availablePlugins)
-			logger.Printf("|SERVERS_UPDATE| Server %d: NOT READY FOR XLITE. Host=%s, NodePubKey=%s, Missing Plugins: %v", serverID, host, serverInfo.NodePubKey, missing)
+			logPrefixed(LogPrefixServerUpdate, " Server %d: NOT READY FOR XLITE. Host=%s, NodePubKey=%s, Missing Plugins: %v", serverID, host, serverInfo.NodePubKey, missing)
 		}
 	}
 
-	logger.Printf("|SERVERS_UPDATE| Parsed %d remote servers. %d READY, %d NOT READY.", len(remoteServers), readyCount, notReadyCount)
+	logPrefixed(LogPrefixServerUpdate, " Parsed %d remote servers. %d READY, %d NOT READY.", len(remoteServers), readyCount, notReadyCount)
 	return validServerConfigs, nil
 }
 
@@ -178,7 +178,7 @@ func fetchAndFilterRemoteServers(providerURL string) ([]ServerConfig, error) {
 func UpdateServersFromJSON(servers *Servers) {
 	serverConfigs := globalConfig.GetConfig().ServersMap
 
-	logger.Printf("|SERVERS_UPDATE| Syncing server list with %d configurations.", len(serverConfigs))
+	logPrefixed(LogPrefixServerUpdate, " Syncing server list with %d configurations.", len(serverConfigs))
 
 	// Use a map to track which servers from the new config are present.
 	// This helps identify which old servers to remove.
@@ -192,7 +192,7 @@ func UpdateServersFromJSON(servers *Servers) {
 			// Note: GetServerByURL now returns a pointer, so changes are reflected.
 			if server.exr != serverCfg.EXR {
 				locks.servers.Lock()
-				logger.Printf("|SERVERS_UPDATE| Updating server[%d]: URL=%s, EXR=%v -> %v", server.id, serverCfg.URL, server.exr, serverCfg.EXR)
+				logPrefixed(LogPrefixServerUpdate, " Updating server[%d]: URL=%s, EXR=%v -> %v", server.id, serverCfg.URL, server.exr, serverCfg.EXR)
 				server.exr = serverCfg.EXR
 				locks.servers.Unlock()
 			}
@@ -203,7 +203,7 @@ func UpdateServersFromJSON(servers *Servers) {
 				exr: serverCfg.EXR,
 			}
 			id := servers.AddServer(newServer)
-			logger.Printf("|SERVERS_UPDATE| Adding new server[%d]: URL=%s, EXR=%v", id, serverCfg.URL, serverCfg.EXR)
+			logPrefixed(LogPrefixServerUpdate, " Adding new server[%d]: URL=%s, EXR=%v", id, serverCfg.URL, serverCfg.EXR)
 		}
 	}
 
@@ -215,14 +215,14 @@ func UpdateServersFromJSON(servers *Servers) {
 		if configServerUrls[server.url] {
 			updatedServerSlice = append(updatedServerSlice, server)
 		} else {
-			logger.Printf("|SERVERS_UPDATE| Removing server[%d]: URL=%s", server.id, server.url)
+			logPrefixed(LogPrefixServerUpdate, " Removing server[%d]: URL=%s", server.id, server.url)
 		}
 	}
 
 	servers.Slice = updatedServerSlice
 	locks.servers.Unlock()
 
-	logger.Printf("Successfully updated servers from JSON. Active servers: %d", len(servers.Slice))
+	logPrefixed(LogPrefixServerUpdate, " Successfully updated servers from JSON. Active servers: %d", len(servers.Slice))
 }
 
 // updateServersFromProviders iterates through the dynamic list providers,
@@ -233,33 +233,33 @@ func updateServersFromProviders(servers *Servers) {
 	for _, providerURL := range cfg.DynlistServersProviders {
 		serverConfigs, err := fetchAndFilterRemoteServers(providerURL)
 		if err != nil {
-			logger.Printf("|SERVERS_UPDATE| Failed to get servers from provider %s: %v", providerURL, err)
+			logPrefixed(LogPrefixServerUpdate, " Failed to get servers from provider %s: %v", providerURL, err)
 			continue
 		}
 
 		if len(serverConfigs) == 0 {
-			logger.Printf("|SERVERS_UPDATE| No valid servers found from provider: %s", providerURL)
+			logPrefixed(LogPrefixServerUpdate, " No valid servers found from provider: %s", providerURL)
 			continue
 		}
 
 		// Update config via config manager
 		if err := globalConfig.UpdateServerList(serverConfigs); err != nil {
-			logger.Printf("|SERVERS_UPDATE| Failed to update server list in config manager: %v", err)
+			logPrefixed(LogPrefixServerUpdate, " Failed to update server list in config manager: %v", err)
 			continue
 		}
 		UpdateServersFromJSON(servers)
 
 		// Successfully updated from a provider, so we can stop.
-		logger.Printf("|SERVERS_UPDATE| Successfully updated server list from provider: %s", providerURL)
+		logPrefixed(LogPrefixServerUpdate, " Successfully updated server list from provider: %s", providerURL)
 		return
 	}
-	logger.Printf("|SERVERS_UPDATE| Failed to update server list from any provider.")
+	logPrefixed(LogPrefixServerUpdate, " Failed to update server list from any provider.")
 }
 
 // startServerUpdateRoutine launches a goroutine that periodically updates the
 // server list from dynamic providers. It performs an initial update immediately.
 func startServerUpdateRoutine(servers *Servers) {
-	logger.Printf("|SERVERS_UPDATE| Starting server update routine")
+	logPrefixed(LogPrefixServerUpdate, " Starting server update routine")
 
 	// Perform an initial update on startup.
 	updateServersFromProviders(servers)
@@ -269,7 +269,7 @@ func startServerUpdateRoutine(servers *Servers) {
 		defer ticker.Stop()
 		for {
 			<-ticker.C
-			logger.Printf("|SERVERS_UPDATE| Triggering periodic server list update.")
+			logPrefixed(LogPrefixServerUpdate, " Triggering periodic server list update.")
 			updateServersFromProviders(servers)
 		}
 	}()
