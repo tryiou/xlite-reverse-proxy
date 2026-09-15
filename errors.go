@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Error types for different domains
 type ServerError struct {
@@ -41,6 +44,23 @@ func (e *HTTPError) Unwrap() error {
 	return e.Err
 }
 
+// RateLimitError is returned when a backend server responds with HTTP 429.
+// It carries the Retry-After duration from the response header so the caller
+// can apply an appropriate backoff before retrying.
+type RateLimitError struct {
+	ServerID   int
+	RetryAfter time.Duration
+	Err        error
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("server[%d] rate limited (429): retry after %v: %v", e.ServerID, e.RetryAfter, e.Err)
+}
+
+func (e *RateLimitError) Unwrap() error {
+	return e.Err
+}
+
 // Helper functions for creating errors
 func NewServerError(serverID int, operation string, err error) error {
 	return &ServerError{
@@ -66,6 +86,14 @@ func NewHTTPError(statusCode int, operation string, err error) error {
 	}
 }
 
+func NewRateLimitError(serverID int, retryAfter time.Duration, err error) error {
+	return &RateLimitError{
+		ServerID:   serverID,
+		RetryAfter: retryAfter,
+		Err:        err,
+	}
+}
+
 // Error categorization helpers
 func IsServerError(err error) bool {
 	_, ok := err.(*ServerError)
@@ -79,5 +107,10 @@ func IsValidationError(err error) bool {
 
 func IsHTTPError(err error) bool {
 	_, ok := err.(*HTTPError)
+	return ok
+}
+
+func IsRateLimitError(err error) bool {
+	_, ok := err.(*RateLimitError)
 	return ok
 }

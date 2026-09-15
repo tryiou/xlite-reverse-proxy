@@ -6,11 +6,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -249,23 +251,37 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	var actualAttempts int
 	var permanentStop bool
 
+	// 429 backoff state: after a rate-limit response we retry the SAME server
+	// with exponential backoff.  Once the per-server retry budget is exhausted
+	// we fall through to the normal path (pick a different random server).
+	var rateLimitRetries int
+	var rateLimitServerID int
+	// When non-zero the next loop iteration reuses this server instead of
+	// picking a new random one.  Cleared on success, exhaustion, or other errors.
+	var reuseServerID int
+
 	for i := 0; i < maxRetries; i++ {
 		actualAttempts = i + 1
 
-		randomValidServerID, err := servers.GetRandomValidServerID(coin)
-		if err != nil {
-			lastError = err
-			// Permanent error: coin not found or no servers for coin — don't retry.
-			// Emit a single throttled "no server" event; the exhausted summary is
-			// skipped for this path (permanentStop) to avoid doubled log lines.
-			if errors.Is(err, ErrCoinNotFound) || errors.Is(err, ErrServerIDsArrayNotFound) || errors.Is(err, ErrNoServerForCoin) {
-				logCoinNoServer(coin, relayTag(requestData.Ip, coin, requestData.Method), err)
-				permanentStop = true
-				break
+		// --- Pick server: reuse the 429'd server or pick a random one ---
+		var randomValidServerID int
+		var err error
+		if reuseServerID > 0 {
+			randomValidServerID = reuseServerID
+			reuseServerID = 0 // consumed; will be re-set below if another 429
+		} else {
+			randomValidServerID, err = servers.GetRandomValidServerID(coin)
+			if err != nil {
+				lastError = err
+				if errors.Is(err, ErrCoinNotFound) || errors.Is(err, ErrServerIDsArrayNotFound) || errors.Is(err, ErrNoServerForCoin) {
+					logCoinNoServer(coin, relayTag(requestData.Ip, coin, requestData.Method), err)
+					permanentStop = true
+					break
+				}
+				logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+					"getRandomValidServer", -1, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
+				continue
 			}
-			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
-				"getRandomValidServer", -1, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
-			continue
 		}
 
 		// Use read lock for getting server data
@@ -295,21 +311,53 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 				return nil, err
 			}
 
-			// Note: the server is deliberately NOT removed from the coin's valid
-			// server list here. A failed request must not ban a node (especially a
-			// unique one); the retry loop simply picks again from the same list.
 			lastError = err
 
+			// --- 429 Rate Limit: exponential backoff + retry same server ---
+			var rateLimitErr *RateLimitError
+			if errors.As(err, &rateLimitErr) {
+				if server.id == rateLimitServerID {
+					rateLimitRetries++
+				} else {
+					// New server hit 429 — reset the counter
+					rateLimitServerID = server.id
+					rateLimitRetries = 1
+				}
+
+				if rateLimitRetries <= Relay429MaxRetries {
+					delay := computeRelay429Backoff(rateLimitRetries, rateLimitErr.RetryAfter)
+					logPrefixed(LogPrefixRevProxy, " %s%s 429 rate limited, backoff %v (attempt %d/%d on server[%d])",
+						relayTag(requestData.Ip, coin, requestData.Method), serverTag(server.id),
+						delay, rateLimitRetries, Relay429MaxRetries, server.id)
+					time.Sleep(delay)
+					// Retry the SAME server on the next iteration
+					reuseServerID = server.id
+					continue
+				}
+				// Exhausted 429 retries on this server — fall through to normal retry
+				logPrefixed(LogPrefixRevProxy, " %s%s 429 retries exhausted on server[%d], trying another server",
+					relayTag(requestData.Ip, coin, requestData.Method), serverTag(server.id))
+				rateLimitRetries = 0
+				rateLimitServerID = 0
+				continue
+			}
+
+			// --- Other 4xx: stop immediately (client error) ---
 			if strings.Contains(err.Error(), " status: 4") {
 				logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
 					"handleOriginServerResponse", server.id, fmt.Errorf("attempt %d/%d (4xx, stopping retries): %w", i+1, maxRetries, err))
 				return nil, err
 			}
 
+			// --- 5xx / network errors: retry with a different server ---
 			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
 				"handleOriginServerResponse", server.id, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
 			continue
 		}
+
+		// Success — reset 429 backoff state
+		rateLimitRetries = 0
+		rateLimitServerID = 0
 
 		if err := WriteJSONResponse(rw, resp); err != nil {
 			return nil, fmt.Errorf("failed to write response: %v", err)
@@ -318,8 +366,6 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	}
 
 	// All retries exhausted
-	// Don't write response here - let the caller handle it to avoid double responses
-	// Provide more context in the error message
 	tag := relayTag(requestData.Ip, coin, requestData.Method)
 	if permanentStop {
 		return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s: %w", actualAttempts, maxRetries, coin, lastError)
@@ -330,6 +376,59 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	}
 	logPrefixed(LogPrefixRevProxy, " %s%s ALL RETRIES EXHAUSTED %d/%d (no last error captured)", tag, serverTag(-1), actualAttempts, maxRetries)
 	return nil, fmt.Errorf("failed after %d/%d attempt(s) for coin %s", actualAttempts, maxRetries, coin)
+}
+
+// parseRetryAfterHeader parses a Retry-After header value.
+// Supports both integer seconds (e.g. "120") and HTTP-date formats.
+// Returns a fallback delay if parsing fails.  No cap is applied here;
+// capping is the caller's responsibility (see computeRelay429Backoff).
+func parseRetryAfterHeader(header string) time.Duration {
+	if header == "" {
+		return Relay429BaseDelay
+	}
+	// Try integer seconds first
+	if seconds, err := strconv.Atoi(header); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	// Try HTTP-date format
+	if t, err := time.Parse(time.RFC1123, header); err == nil {
+		d := time.Until(t)
+		if d > 0 {
+			return d
+		}
+	}
+	return Relay429BaseDelay
+}
+
+// computeRelay429Backoff calculates the exponential backoff delay for a 429 retry.
+// It uses the maximum of the backend's Retry-After hint and the computed
+// exponential delay, capped at Relay429MaxDelay.  ±20% jitter is applied
+// within the cap to prevent thundering-herd collisions across concurrent clients.
+func computeRelay429Backoff(attempt int, retryAfter time.Duration) time.Duration {
+	// Exponential component: base * 2^(attempt-1)
+	expDelay := Relay429BaseDelay * time.Duration(1<<(attempt-1))
+
+	// Use the larger of the backend's hint and our exponential backoff
+	delay := expDelay
+	if retryAfter > delay {
+		delay = retryAfter
+	}
+	if delay > Relay429MaxDelay {
+		delay = Relay429MaxDelay
+	}
+
+	// Apply ±20% jitter, clamped so the result never exceeds the cap
+	jitter := float64(delay) * 0.2
+	jitterOffset := time.Duration((rand.Float64()*2 - 1) * jitter)
+	delay += jitterOffset
+	if delay > Relay429MaxDelay {
+		delay = Relay429MaxDelay
+	}
+	if delay < 0 {
+		delay = 0
+	}
+
+	return delay
 }
 
 // updateRequestHeaders updates the request headers for the origin server.
@@ -367,9 +466,21 @@ func updateRequestHeaders(req *http.Request, server *Server, requestData Request
 // handleOriginServerResponse sends the request to the origin server, parses the response,
 // and returns it. The caller is responsible for writing the response to the client.
 func handleOriginServerResponse(req *http.Request, server *Server) (*fastjson.Value, error) {
-	originServerResponse, err := sendRequestToOriginServer(req)
+	// Rate-limit outbound requests to this backend server.
+	// The permit is acquired before the HTTP call and released after the
+	// response body is fully read (or on error), keeping the slot open only
+	// for the duration of the wire transfer.
+	if server.requestLimiter != nil {
+		rateCtx, rateCancel := context.WithTimeout(req.Context(), RateLimitWaitTimeout)
+		defer rateCancel()
+		if err := server.requestLimiter.Wait(rateCtx); err != nil {
+			return nil, NewServerError(server.id, "rate limit", fmt.Errorf("backend rate limit: %w", err))
+		}
+	}
+
+	originServerResponse, err := sendRequestToOriginServer(req, server.id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request to origin server: %v", err)
+		return nil, fmt.Errorf("failed to send request to origin server: %w", err)
 	}
 
 	responseBody, err := decompressResponseBody(originServerResponse)
@@ -557,7 +668,9 @@ func transformRequestToEXRSyntax(req *http.Request, serverURL string, requestDat
 }
 
 // sendRequestToOriginServer sends the request to the origin server.
-func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
+// serverID is passed through so that 429 responses can be wrapped in a
+// RateLimitError carrying the Retry-After duration.
+func sendRequestToOriginServer(req *http.Request, serverID int) (*http.Response, error) {
 	client := globalConfig.GetClient()
 	if client == nil {
 		return nil, fmt.Errorf("HTTP client not initialized")
@@ -590,6 +703,11 @@ func sendRequestToOriginServer(req *http.Request) (*http.Response, error) {
 	}
 
 	if resp.StatusCode != HTTPStatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := parseRetryAfterHeader(resp.Header.Get("Retry-After"))
+			resp.Body.Close()
+			return nil, NewRateLimitError(serverID, retryAfter, fmt.Errorf("429 Too Many Requests"))
+		}
 		return nil, fmt.Errorf("unexpected server response status: %s", resp.Status)
 	}
 

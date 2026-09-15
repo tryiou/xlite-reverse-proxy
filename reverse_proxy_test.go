@@ -556,3 +556,89 @@ func TestFlushCanceledCountTail(t *testing.T) {
 
 	assert.Equal(t, 2, strings.Count(buf.String(), "client requests canceled mid-request"))
 }
+
+func TestParseRetryAfterHeader(t *testing.T) {
+	tests := []struct {
+		name     string
+		header   string
+		expected time.Duration
+	}{
+		{"empty string falls back to base delay", "", Relay429BaseDelay},
+		{"valid integer seconds", "120", 120 * time.Second},
+		{"small integer seconds", "1", 1 * time.Second},
+		{"large integer seconds returned as-is", "300", 300 * time.Second},
+		{"zero seconds falls back to base delay", "0", Relay429BaseDelay},
+		{"negative seconds falls back to base delay", "-5", Relay429BaseDelay},
+		{"non-numeric string falls back to base delay", "abc", Relay429BaseDelay},
+		{"valid RFC1123 date in the future", "", 0}, // special-cased below
+		{"RFC1123 date in the past falls back to base delay", time.Now().Add(-10 * time.Second).UTC().Format(time.RFC1123), Relay429BaseDelay},
+		{"malformed date falls back to base delay", "Mon, 02 Jan 2006 15:04:05", Relay429BaseDelay},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "valid RFC1123 date in the future" {
+				future := time.Now().Add(30 * time.Second).UTC().Format(time.RFC1123)
+				got := parseRetryAfterHeader(future)
+				if got < 29*time.Second || got > 31*time.Second {
+					t.Errorf("parseRetryAfterHeader(%q) = %v, want ~30s", future, got)
+				}
+				return
+			}
+			got := parseRetryAfterHeader(tt.header)
+			if got != tt.expected {
+				t.Errorf("parseRetryAfterHeader(%q) = %v, want %v", tt.header, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestComputeRelay429Backoff(t *testing.T) {
+	t.Run("attempt 1 base delay with zero retry-after", func(t *testing.T) {
+		delay := computeRelay429Backoff(1, 0)
+		min := time.Duration(float64(Relay429BaseDelay) * 0.8)
+		max := time.Duration(float64(Relay429BaseDelay) * 1.2)
+		if delay < min || delay > max {
+			t.Errorf("attempt 1 with zero retryAfter: got %v, want [%v, %v]", delay, min, max)
+		}
+	})
+
+	t.Run("attempt 2 doubles", func(t *testing.T) {
+		delay := computeRelay429Backoff(2, 0)
+		base := Relay429BaseDelay * 2
+		min := time.Duration(float64(base) * 0.8)
+		max := time.Duration(float64(base) * 1.2)
+		if delay < min || delay > max {
+			t.Errorf("attempt 2: got %v, want [%v, %v]", delay, min, max)
+		}
+	})
+
+	t.Run("retry-after larger than exponential is capped", func(t *testing.T) {
+		retryAfter := 5 * time.Second
+		delay := computeRelay429Backoff(1, retryAfter)
+		// retryAfter exceeds cap, so delay is capped at Relay429MaxDelay ± 20%
+		min := time.Duration(float64(Relay429MaxDelay) * 0.8)
+		max := Relay429MaxDelay
+		if delay < min || delay > max {
+			t.Errorf("retryAfter=5s attempt 1: got %v, want [%v, %v]", delay, min, max)
+		}
+	})
+
+	t.Run("result never exceeds max delay", func(t *testing.T) {
+		for attempt := 1; attempt <= 20; attempt++ {
+			delay := computeRelay429Backoff(attempt, 10*time.Second)
+			if delay > Relay429MaxDelay {
+				t.Errorf("attempt %d: delay %v exceeds max %v", attempt, delay, Relay429MaxDelay)
+			}
+		}
+	})
+
+	t.Run("result is never negative", func(t *testing.T) {
+		for attempt := 1; attempt <= 20; attempt++ {
+			delay := computeRelay429Backoff(attempt, 0)
+			if delay < 0 {
+				t.Errorf("attempt %d: negative delay %v", attempt, delay)
+			}
+		}
+	})
+}

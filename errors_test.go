@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestServerError(t *testing.T) {
@@ -126,5 +127,48 @@ func TestErrorCategorization(t *testing.T) {
 	}
 	if !IsHTTPError(httpErr) {
 		t.Error("Expected IsHTTPError to return true for HTTPError")
+	}
+}
+
+func TestRateLimitError(t *testing.T) {
+	originalErr := errors.New("429 Too Many Requests")
+	retryAfter := 5 * time.Second
+	rlErr := NewRateLimitError(7, retryAfter, originalErr)
+
+	// Test error message
+	expected := "server[7] rate limited (429): retry after 5s: 429 Too Many Requests"
+	if rlErr.Error() != expected {
+		t.Errorf("Expected error message %q, got %q", expected, rlErr.Error())
+	}
+
+	// Test unwrapping
+	if !errors.Is(rlErr, originalErr) {
+		t.Errorf("Expected error to wrap original error")
+	}
+
+	// Test type assertion via errors.As
+	var target *RateLimitError
+	if !errors.As(rlErr, &target) {
+		t.Fatalf("Expected errors.As to succeed for RateLimitError")
+	}
+	if target.ServerID != 7 {
+		t.Errorf("Expected ServerID 7, got %d", target.ServerID)
+	}
+	if target.RetryAfter != retryAfter {
+		t.Errorf("Expected RetryAfter %v, got %v", retryAfter, target.RetryAfter)
+	}
+	if target.Err != originalErr {
+		t.Errorf("Expected Err to be original error")
+	}
+
+	// Test IsRateLimitError helper
+	if !IsRateLimitError(rlErr) {
+		t.Error("Expected IsRateLimitError to return true for RateLimitError")
+	}
+	if IsRateLimitError(errors.New("not a rate limit error")) {
+		t.Error("Expected IsRateLimitError to return false for plain error")
+	}
+	if IsRateLimitError(NewServerError(1, "test", nil)) {
+		t.Error("Expected IsRateLimitError to return false for ServerError")
 	}
 }

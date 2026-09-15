@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/valyala/fastjson"
+	"golang.org/x/time/rate"
 )
 
 type Coin struct {
@@ -24,8 +25,9 @@ type Server struct {
 	getheights          *fastjson.Value
 	coinsMap            map[string]Coin
 	hashesStorage       map[string]map[int]string
-	consecutiveFailures int       // tracks consecutive failures for exponential backoff
-	nextRetryAt         time.Time // when this server is eligible for retry after backoff
+	consecutiveFailures int           // tracks consecutive failures for exponential backoff
+	nextRetryAt         time.Time     // when this server is eligible for retry after backoff
+	requestLimiter      *rate.Limiter // per-server outbound rate limit (enforces backend cap)
 	//                coins   heights hashes
 }
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/valyala/fastjson"
+	"golang.org/x/time/rate"
 )
 
 // AddServer adds a new server to the list of servers managed by the proxy.
@@ -58,6 +59,7 @@ func (servers *Servers) AddServer(s *Server) int {
 	s.getheights = getDefaultJSONResponse()
 	s.coinsMap = make(map[string]Coin)
 	s.hashesStorage = make(map[string]map[int]string)
+	s.requestLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(BackendRateLimitPerMin)), 1)
 	return s.id
 }
 

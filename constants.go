@@ -47,6 +47,29 @@ const (
 	// CanceledLogInterval is the aggregation window for logging client
 	// disconnects (context canceled) as a single count line.
 	CanceledLogInterval = 5 * time.Second
+
+	// BackendRateLimitPerMin is the per-server outbound request rate limit.
+	// Each backend (Snode/EXR connector) enforces a hard cap (typically 50 req/min).
+	// This limiter prevents the proxy from exceeding that budget.
+	BackendRateLimitPerMin = 50
+
+	// Relay429MaxRetries is the maximum number of 429-specific retries on the
+	// same server before falling through to the normal retry loop (try another server).
+	// The invariant is: Relay429MaxRetries + 1 < RetryAttemptsDefault, because the
+	// initial 429 encounter also consumes one loop iteration. With the default of 3
+	// total retries, this means max 1 same-server retry before fallback.
+	Relay429MaxRetries = 1
+
+	// Relay429BaseDelay is the initial backoff delay when a backend returns 429.
+	Relay429BaseDelay = 200 * time.Millisecond
+
+	// Relay429MaxDelay is the maximum backoff cap for 429 retries.
+	Relay429MaxDelay = 2 * time.Second
+
+	// RateLimitWaitTimeout is the maximum time to wait for a per-server rate
+	// limit permit before failing the request. Prevents goroutine pile-up when
+	// a backend is saturated.
+	RateLimitWaitTimeout = 5 * time.Second
 )
 
 // Constants for HTTP and networking

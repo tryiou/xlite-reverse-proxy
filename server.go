@@ -333,6 +333,10 @@ func (s *Server) makeHTTPRequestWithContext(ctx context.Context, httpMethod, pay
 	// Check HTTP status code
 	if res.StatusCode != HTTPStatusOK {
 		elapsed := time.Since(reqTimer)
+		if res.StatusCode == http.StatusTooManyRequests {
+			retryAfter := parseRetryAfterHeader(res.Header.Get("Retry-After"))
+			return nil, NewRateLimitError(s.id, retryAfter, fmt.Errorf("status: %s, elapsed: %v", res.Status, elapsed))
+		}
 		return nil, NewHTTPError(res.StatusCode, "HTTP response", fmt.Errorf("status: %s, elapsed: %v", res.Status, elapsed))
 	}
 
