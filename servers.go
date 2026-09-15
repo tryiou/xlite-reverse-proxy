@@ -59,7 +59,7 @@ func (servers *Servers) AddServer(s *Server) int {
 	s.getheights = getDefaultJSONResponse()
 	s.coinsMap = make(map[string]Coin)
 	s.hashesStorage = make(map[string]map[int]string)
-	s.requestLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(BackendRateLimitPerMin)), 1)
+	s.requestLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(BackendRateLimitPerMin)), 5)
 	return s.id
 }
 

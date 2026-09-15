@@ -67,9 +67,10 @@ const (
 	Relay429MaxDelay = 2 * time.Second
 
 	// RateLimitWaitTimeout is the maximum time to wait for a per-server rate
-	// limit permit before failing the request. Prevents goroutine pile-up when
-	// a backend is saturated.
-	RateLimitWaitTimeout = 5 * time.Second
+	// limit permit before failing the request. Long enough to absorb traffic
+	// bursts without timing out, but short enough to fail fast when the
+	// backend is genuinely saturated.
+	RateLimitWaitTimeout = 15 * time.Second
 )
 
 // Constants for HTTP and networking
