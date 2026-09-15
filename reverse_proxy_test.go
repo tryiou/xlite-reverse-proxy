@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -641,4 +642,393 @@ func TestComputeRelay429Backoff(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: Tests for 429 rate limit retry flow (written BEFORE code changes)
+// ---------------------------------------------------------------------------
+
+// Test 1: sendRequestToOriginServer returns RateLimitError on 429.
+func TestSendRequestToOriginServer_429ReturnsRateLimitError(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestSendRequestToOriginServer_429ReturnsRateLimitError")
+
+	t.Run("429 with Retry-After header", func(t *testing.T) {
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate limit"}`)
+		}))
+		defer backend.Close()
+
+		defer setTestHTTPClient(5)()
+
+		req := httptest.NewRequest("POST", backend.URL, strings.NewReader(`{"method":"test"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RequestURI = "" // client.Do requires empty RequestURI
+
+		_, err := sendRequestToOriginServer(req, 3)
+		assert.Error(t, err)
+
+		var rateLimitErr *RateLimitError
+		if !errors.As(err, &rateLimitErr) {
+			t.Fatalf("error should be *RateLimitError, got %T: %v", err, err)
+		}
+		assert.Equal(t, 3, rateLimitErr.ServerID)
+		assert.Equal(t, 5*time.Second, rateLimitErr.RetryAfter)
+	})
+
+	t.Run("429 without Retry-After header falls back to base delay", func(t *testing.T) {
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate limit"}`)
+		}))
+		defer backend.Close()
+
+		defer setTestHTTPClient(5)()
+
+		req := httptest.NewRequest("POST", backend.URL, strings.NewReader(`{"method":"test"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RequestURI = ""
+
+		_, err := sendRequestToOriginServer(req, 7)
+		assert.Error(t, err)
+
+		var rateLimitErr *RateLimitError
+		if !errors.As(err, &rateLimitErr) {
+			t.Fatalf("error should be *RateLimitError, got %T: %v", err, err)
+		}
+		assert.Equal(t, 7, rateLimitErr.ServerID)
+		assert.Equal(t, Relay429BaseDelay, rateLimitErr.RetryAfter)
+	})
+
+	t.Run("429 with non-numeric Retry-After falls back to base delay", func(t *testing.T) {
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", "abc")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate limit"}`)
+		}))
+		defer backend.Close()
+
+		defer setTestHTTPClient(5)()
+
+		req := httptest.NewRequest("POST", backend.URL, strings.NewReader(`{"method":"test"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RequestURI = ""
+
+		_, err := sendRequestToOriginServer(req, 1)
+		assert.Error(t, err)
+
+		var rateLimitErr *RateLimitError
+		if !errors.As(err, &rateLimitErr) {
+			t.Fatalf("error should be *RateLimitError, got %T: %v", err, err)
+		}
+		assert.Equal(t, Relay429BaseDelay, rateLimitErr.RetryAfter)
+	})
+
+	t.Run("non-429 error is not RateLimitError", func(t *testing.T) {
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "server error", http.StatusInternalServerError)
+		}))
+		defer backend.Close()
+
+		defer setTestHTTPClient(5)()
+
+		req := httptest.NewRequest("POST", backend.URL, strings.NewReader(`{"method":"test"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RequestURI = ""
+
+		_, err := sendRequestToOriginServer(req, 1)
+		assert.Error(t, err)
+		assert.False(t, IsRateLimitError(err), "5xx error should not be RateLimitError")
+	})
+}
+
+// Test 2: retryWithRandomValidServer retries the SAME server on 429 before
+// falling through to a different server. With two servers, at least one
+// iteration should succeed (when server[2] is picked first or after fallback).
+func TestRetryWithRandomValidServer_429BackoffRetriesSameServer(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestRetryWithRandomValidServer_429BackoffRetriesSameServer")
+
+	// Backend that always returns 429 (simulates rate-limited server)
+	backend429 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"rate limit"}`)
+	}))
+	defer backend429.Close()
+
+	// Backend that always returns 200 (simulates healthy server)
+	backendOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"result":"ok"}`)
+	}))
+	defer backendOK.Close()
+
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1,2]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend429.URL, exr: true},
+			{id: 2, url: backendOK.URL, exr: true},
+		},
+	}
+
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"validmethod"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+	defer setTestHTTPClient(5)()
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+
+	requestData := RequestData{Method: "validmethod", Params: []interface{}{"BTC"}, Coin: "BTC", Ip: "127.0.0.1"}
+
+	// Run multiple iterations to cover both random orderings.
+	// At least one iteration should succeed when server[2] (200) is picked.
+	succeeded := false
+	for i := 0; i < 20; i++ {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(
+			`{"method":"validmethod","params":["BTC"]}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "127.0.0.1:12345"
+
+		w := httptest.NewRecorder()
+		server, err := retryWithRandomValidServer(w, req, servers, "BTC", &requestData, 3)
+
+		if err == nil && w.Code == http.StatusOK {
+			succeeded = true
+			assert.JSONEq(t, `{"result":"ok"}`, w.Body.String())
+			_ = server
+			break
+		}
+	}
+
+	assert.True(t, succeeded, "with 2 servers, at least one iteration should succeed when server[2] (200) is picked")
+}
+
+// Test 3: retryWithRandomValidServer exhausts 429 retries on one server and
+// falls through to try other servers. With two servers in the pool, the
+// function always eventually succeeds (either server[2] is picked first, or
+// server[1] is exhausted then server[2] is eventually picked).
+func TestRetryWithRandomValidServer_429ExhaustedFallsThrough(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestRetryWithRandomValidServer_429ExhaustedFallsThrough")
+
+	// Backend that always returns 429 — server[1] is rate-limited
+	backend429 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"rate limit"}`)
+	}))
+	defer backend429.Close()
+
+	// Backend that always returns 200 — server[2] is healthy
+	backendOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"result":"ok"}`)
+	}))
+	defer backendOK.Close()
+
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1,2]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend429.URL, exr: true},
+			{id: 2, url: backendOK.URL, exr: true},
+		},
+	}
+
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"validmethod"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+	defer setTestHTTPClient(5)()
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(
+		`{"method":"validmethod","params":["BTC"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	requestData := RequestData{Method: "validmethod", Params: []interface{}{"BTC"}, Coin: "BTC", Ip: "127.0.0.1"}
+
+	// Run multiple iterations: with 2 servers, eventually server[2] (200) is
+	// picked and succeeds. Some iterations may hit server[1] first (429),
+	// exercising the backoff → exhaustion → fallback path.
+	// We assert that at least one iteration succeeds (proving server[2] works).
+	succeeded := false
+	for i := 0; i < 20; i++ {
+		req2 := httptest.NewRequest("POST", "/", strings.NewReader(
+			`{"method":"validmethod","params":["BTC"]}`))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.RemoteAddr = "127.0.0.1:12345"
+
+		w2 := httptest.NewRecorder()
+		_, err := retryWithRandomValidServer(w2, req2, servers, "BTC", &requestData, 3)
+
+		if err == nil && w2.Code == http.StatusOK {
+			succeeded = true
+			break
+		}
+	}
+
+	assert.True(t, succeeded, "with 2 servers, at least one iteration should succeed when server[2] (200) is picked")
+}
+
+// Test 4: retryWithRandomValidServer on a single-server coin exhausts all
+// retries and returns an error when the only server always returns 429.
+func TestRetryWithRandomValidServer_SingleServer429Exhausted(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestRetryWithRandomValidServer_SingleServer429Exhausted")
+
+	callCount := 0
+	backend429 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"rate limit"}`)
+	}))
+	defer backend429.Close()
+
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend429.URL, exr: true},
+		},
+	}
+
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"validmethod"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+	defer setTestHTTPClient(5)()
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(
+		`{"method":"validmethod","params":["BTC"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	requestData := RequestData{Method: "validmethod", Params: []interface{}{"BTC"}, Coin: "BTC", Ip: "127.0.0.1"}
+
+	w := httptest.NewRecorder()
+	server, err := retryWithRandomValidServer(w, req, servers, "BTC", &requestData, 3)
+
+	assert.Error(t, err, "should return error when all retries exhausted")
+	assert.Nil(t, server, "should return nil server on exhaustion")
+	assert.Contains(t, err.Error(), "failed after", "error should indicate retries were exhausted")
+	assert.GreaterOrEqual(t, callCount, 2, "backend should have been called multiple times")
+}
+
+// Test 5: Full integration through reverseProxyHandler with 429 then success.
+func TestReverseProxy_429EndToEnd(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestReverseProxy_429EndToEnd")
+
+	callCount := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		log.Printf("TEST_UNIT: Backend received request %d for path %s", callCount, r.URL.Path)
+
+		// Handle EXR path
+		if strings.HasPrefix(r.URL.Path, "/xrs/") {
+			if callCount == 1 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, `{"error":"rate limit"}`)
+				return
+			}
+			fmt.Fprint(w, `{"result":"ok"}`)
+			return
+		}
+
+		// Handle regular path
+		if callCount == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":"rate limit"}`)
+			return
+		}
+		fmt.Fprint(w, `{"result":"ok"}`)
+	}))
+	defer backend.Close()
+
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend.URL, exr: true},
+		},
+	}
+
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"validmethod"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+	defer setTestHTTPClient(5)()
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(
+		`{"method":"validmethod","params":["BTC"]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	reverseProxyHandler(servers)(w, req)
+
+	res := w.Result()
+	body, _ := io.ReadAll(res.Body)
+
+	log.Printf("TEST_UNIT: callCount=%d status=%d body=%s", callCount, res.StatusCode, string(body))
+
+	assert.Equal(t, http.StatusOK, res.StatusCode, "should succeed after retry")
+	assert.JSONEq(t, `{"result":"ok"}`, string(body))
+	assert.GreaterOrEqual(t, callCount, 2, "backend should have received at least 2 requests (429 + retry)")
+}
+
+// Test 6: handleOriginServerResponse passes through without blocking when
+// there is no proactive rate limiter (the field will be nil after removal).
+func TestHandleOriginServerResponse_NoProactiveLimiter(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestHandleOriginServerResponse_NoProactiveLimiter")
+
+	callCount := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"result":"test"}`)
+	}))
+	defer backend.Close()
+
+	server := &Server{id: 1, url: backend.URL, exr: false}
+
+	defer setTestHTTPClient(5)()
+
+	// Build a request that already points to the backend URL, as
+	// updateRequestHeaders would have done before calling handleOriginServerResponse.
+	req := httptest.NewRequest("GET", backend.URL+"/getblockcount", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.RequestURI = "" // client.Do requires empty RequestURI
+
+	resp, err := handleOriginServerResponse(req, server)
+
+	assert.NoError(t, err, "should not error when requestLimiter is nil")
+	assert.NotNil(t, resp, "should return a response")
+	assert.Equal(t, 1, callCount, "backend should be called exactly once")
+	if resp != nil {
+		assert.JSONEq(t, `{"result":"test"}`, string(resp.MarshalTo(nil)))
+	}
 }

@@ -6,7 +6,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -466,18 +465,6 @@ func updateRequestHeaders(req *http.Request, server *Server, requestData Request
 // handleOriginServerResponse sends the request to the origin server, parses the response,
 // and returns it. The caller is responsible for writing the response to the client.
 func handleOriginServerResponse(req *http.Request, server *Server) (*fastjson.Value, error) {
-	// Rate-limit outbound requests to this backend server.
-	// The permit is acquired before the HTTP call and released after the
-	// response body is fully read (or on error), keeping the slot open only
-	// for the duration of the wire transfer.
-	if server.requestLimiter != nil {
-		rateCtx, rateCancel := context.WithTimeout(req.Context(), RateLimitWaitTimeout)
-		defer rateCancel()
-		if err := server.requestLimiter.Wait(rateCtx); err != nil {
-			return nil, NewServerError(server.id, "rate limit", fmt.Errorf("backend rate limit: %w", err))
-		}
-	}
-
 	originServerResponse, err := sendRequestToOriginServer(req, server.id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request to origin server: %w", err)
