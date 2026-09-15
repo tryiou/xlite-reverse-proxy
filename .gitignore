@@ -8,6 +8,7 @@
 *.dll
 *.so
 *.dylib
+xlite-reverse-proxy
 
 # Test binary, built with `go test -c`
 *.test
