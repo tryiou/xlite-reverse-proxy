@@ -8,7 +8,7 @@ import (
 // Constants for timeouts and intervals - internal implementation details only
 const (
 	// RetryAttemptsDefault is the default maximum number of retry attempts for server requests
-	RetryAttemptsDefault = 3
+	RetryAttemptsDefault = 5
 
 	// PingRetryAttempts is the maximum number of ping attempts per health-check cycle
 	// before a server is evicted. A server is evicted only if all attempts fail.
@@ -51,15 +51,15 @@ const (
 	// Relay429MaxRetries is the maximum number of 429-specific retries on the
 	// same server before falling through to the normal retry loop (try another server).
 	// The invariant is: Relay429MaxRetries + 1 < RetryAttemptsDefault, because the
-	// initial 429 encounter also consumes one loop iteration. With the default of 3
-	// total retries, this means max 1 same-server retry before fallback.
-	Relay429MaxRetries = 1
+	// initial 429 encounter also consumes one loop iteration. With RetryAttemptsDefault=5
+	// and Relay429MaxRetries=2, this allows 2 same-server retries before fallback.
+	Relay429MaxRetries = 2
 
 	// Relay429BaseDelay is the initial backoff delay when a backend returns 429.
-	Relay429BaseDelay = 200 * time.Millisecond
+	Relay429BaseDelay = 1 * time.Second
 
 	// Relay429MaxDelay is the maximum backoff cap for 429 retries.
-	Relay429MaxDelay = 2 * time.Second
+	Relay429MaxDelay = 5 * time.Second
 )
 
 // Constants for HTTP and networking

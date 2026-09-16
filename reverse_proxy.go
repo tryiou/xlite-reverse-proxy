@@ -258,6 +258,10 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 	// When non-zero the next loop iteration reuses this server instead of
 	// picking a new random one.  Cleared on success, exhaustion, or other errors.
 	var reuseServerID int
+	// When non-zero the next random pick excludes this server ID, ensuring
+	// we try a genuinely different server after429 exhaustion. One-shot: cleared
+	// after the next GetRandomValidServerID call.
+	var excludeServerID int
 
 	for i := 0; i < maxRetries; i++ {
 		actualAttempts = i + 1
@@ -267,20 +271,24 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 		var err error
 		if reuseServerID > 0 {
 			randomValidServerID = reuseServerID
-			reuseServerID = 0 // consumed; will be re-set below if another 429
+			reuseServerID = 0   // consumed; will be re-set below if another 429
+			excludeServerID = 0 // clear exclusion since we're reusing
+		} else if excludeServerID > 0 {
+			randomValidServerID, err = servers.GetRandomValidServerID(coin, excludeServerID)
+			excludeServerID = 0 // one-shot exclusion consumed
 		} else {
 			randomValidServerID, err = servers.GetRandomValidServerID(coin)
-			if err != nil {
-				lastError = err
-				if errors.Is(err, ErrCoinNotFound) || errors.Is(err, ErrServerIDsArrayNotFound) || errors.Is(err, ErrNoServerForCoin) {
-					logCoinNoServer(coin, relayTag(requestData.Ip, coin, requestData.Method), err)
-					permanentStop = true
-					break
-				}
-				logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
-					"getRandomValidServer", -1, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
-				continue
+		}
+		if err != nil {
+			lastError = err
+			if errors.Is(err, ErrCoinNotFound) || errors.Is(err, ErrServerIDsArrayNotFound) || errors.Is(err, ErrNoServerForCoin) {
+				logCoinNoServer(coin, relayTag(requestData.Ip, coin, requestData.Method), err)
+				permanentStop = true
+				break
 			}
+			logRelayError(relayTag(requestData.Ip, coin, requestData.Method),
+				"getRandomValidServer", -1, fmt.Errorf("attempt %d/%d: %w", i+1, maxRetries, err))
+			continue
 		}
 
 		// Use read lock for getting server data
@@ -333,9 +341,10 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 					reuseServerID = server.id
 					continue
 				}
-				// Exhausted 429 retries on this server — fall through to normal retry
+				// Exhausted 429 retries on this server — exclude it from next pick
 				logPrefixed(LogPrefixRevProxy, " %s%s 429 retries exhausted on server[%d], trying another server",
-					relayTag(requestData.Ip, coin, requestData.Method), serverTag(server.id))
+					relayTag(requestData.Ip, coin, requestData.Method), serverTag(server.id), server.id)
+				excludeServerID = server.id // don't pick this server again
 				rateLimitRetries = 0
 				rateLimitServerID = 0
 				continue

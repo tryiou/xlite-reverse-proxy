@@ -404,8 +404,10 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 }
 
 // GetRandomValidServerID selects a random, healthy server for a given coin from the list of
-// servers that are in consensus.
-func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
+// servers that are in consensus. Optional excludeServerID(s) are filtered out before
+// selection — used by the 429 retry logic to avoid re-picking a server that just
+// exhausted its backoff budget.
+func (servers *Servers) GetRandomValidServerID(coin string, excludeServerID ...int) (int, error) {
 	coinObj := servers.GlobalCoinServerIDs.GetObject(coin)
 	if coinObj == nil {
 		return -1, fmt.Errorf("%w: %s", ErrCoinNotFound, coin)
@@ -418,10 +420,29 @@ func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	// Get the length of the coinArray
 	coinArrayLen := len(coinArray)
 	if coinArrayLen < 1 {
 		return -1, fmt.Errorf("%w: %s (count: %d)", ErrNoServerForCoin, coin, coinArrayLen)
+	}
+
+	// Filter out excluded server IDs
+	var validIDs []*fastjson.Value
+	for _, idVal := range coinArray {
+		id := idVal.GetInt()
+		excluded := false
+		for _, ex := range excludeServerID {
+			if id == ex {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			validIDs = append(validIDs, idVal)
+		}
+	}
+
+	if len(validIDs) == 0 {
+		return -1, fmt.Errorf("%w: %s (all %d servers excluded)", ErrNoServerForCoin, coin, coinArrayLen)
 	}
 
 	// Create a private instance of rand.Rand with a custom seed
@@ -429,11 +450,11 @@ func (servers *Servers) GetRandomValidServerID(coin string) (int, error) {
 	source := rand.NewSource(seed)
 	rng := rand.New(source)
 
-	// Get a random index within the range of the coinArray
-	randomIndex := rng.Intn(coinArrayLen)
+	// Get a random index within the range of validIDs
+	randomIndex := rng.Intn(len(validIDs))
 
 	// Pick the element at the random index
-	randomValidServerID := coinArray[randomIndex].GetInt()
+	randomValidServerID := validIDs[randomIndex].GetInt()
 
 	return randomValidServerID, nil
 }

@@ -809,3 +809,75 @@ func TestEvictionLoopBackoffPreservation(t *testing.T) {
 	assert.False(t, srv3.nextRetryAt.IsZero(),
 		"Server with both failures should have nextRetryAt set")
 }
+
+// TestGetRandomValidServerID_ExcludeServer verifies that excluded server IDs
+// are never returned by GetRandomValidServerID.
+func TestGetRandomValidServerID_ExcludeServer(t *testing.T) {
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1,2,3]}}`),
+	}
+
+	// Run 30 iterations excluding server[1] — should never return 1
+	for i := 0; i < 30; i++ {
+		id, err := servers.GetRandomValidServerID("BTC", 1)
+		assert.NoError(t, err)
+		assert.NotEqual(t, 1, id, "excluded server[1] should never be returned")
+		assert.True(t, id == 2 || id == 3, "should return server[2] or server[3], got %d", id)
+	}
+}
+
+// TestGetRandomValidServerID_MultipleExclusions verifies multiple excluded IDs.
+func TestGetRandomValidServerID_MultipleExclusions(t *testing.T) {
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1,2,3]}}`),
+	}
+
+	// Exclude servers 1 and 2 — should always return 3
+	for i := 0; i < 20; i++ {
+		id, err := servers.GetRandomValidServerID("BTC", 1, 2)
+		assert.NoError(t, err)
+		assert.Equal(t, 3, id, "should always return server[3] when [1,2] excluded")
+	}
+}
+
+// TestGetRandomValidServerID_AllExcluded returns ErrNoServerForCoin when every
+// server in the coin's list is excluded.
+func TestGetRandomValidServerID_AllExcluded(t *testing.T) {
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1]}}`),
+	}
+
+	id, err := servers.GetRandomValidServerID("BTC", 1)
+	assert.ErrorIs(t, err, ErrNoServerForCoin)
+	assert.Equal(t, -1, id)
+}
+
+// TestGetRandomValidServerID_NoExclusionBackwardCompat verifies the function
+// works identically to the old signature when no exclusions are passed.
+func TestGetRandomValidServerID_NoExclusionBackwardCompat(t *testing.T) {
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1,2]}}`),
+	}
+
+	seen := make(map[int]bool)
+	for i := 0; i < 30; i++ {
+		id, err := servers.GetRandomValidServerID("BTC")
+		assert.NoError(t, err)
+		seen[id] = true
+		assert.True(t, id == 1 || id == 2, "should return server[1] or server[2], got %d", id)
+	}
+	assert.True(t, seen[1], "should have seen server[1] at least once")
+	assert.True(t, seen[2], "should have seen server[2] at least once")
+}
+
+// TestGetRandomValidServerID_CoinNotFound verifies coin-missing errors
+// are unaffected by the exclusion parameter.
+func TestGetRandomValidServerID_CoinNotFound(t *testing.T) {
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1]}}`),
+	}
+
+	id, err := servers.GetRandomValidServerID("LTC", 1)
+	assert.ErrorIs(t, err, ErrCoinNotFound)
+	assert.Equal(t, -1, id)
+}
