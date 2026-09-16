@@ -881,3 +881,34 @@ func TestGetRandomValidServerID_CoinNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCoinNotFound)
 	assert.Equal(t, -1, id)
 }
+
+func TestGetServerCountForCoin(t *testing.T) {
+	servers := &Servers{
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1]},"DASH":{"ids":[1,2,3]}}`),
+	}
+
+	assert.Equal(t, 1, servers.GetServerCountForCoin("BTC"), "BTC has 1 server")
+	assert.Equal(t, 3, servers.GetServerCountForCoin("DASH"), "DASH has 3 servers")
+	assert.Equal(t, 0, servers.GetServerCountForCoin("LTC"), "LTC not found")
+}
+
+func TestComputeRelay429Backoff_SingleServerParams(t *testing.T) {
+	// Single-server params produce longer delays than default params
+	for attempt := 1; attempt <= 3; attempt++ {
+		ssDelay := computeRelay429Backoff(attempt, 0, Relay429SingleServerBaseDelay, Relay429SingleServerMaxDelay)
+		msDelay := computeRelay429Backoff(attempt, 0, Relay429BaseDelay, Relay429MaxDelay)
+		if ssDelay <= msDelay {
+			t.Errorf("attempt %d: single-server delay %v should be > multi-server delay %v", attempt, ssDelay, msDelay)
+		}
+	}
+	// All single-server delays should be capped at maxDelay
+	for attempt := 1; attempt <= 20; attempt++ {
+		delay := computeRelay429Backoff(attempt, 0, Relay429SingleServerBaseDelay, Relay429SingleServerMaxDelay)
+		if delay > Relay429SingleServerMaxDelay {
+			t.Errorf("attempt %d: delay %v exceeds single-server max %v", attempt, delay, Relay429SingleServerMaxDelay)
+		}
+		if delay < 0 {
+			t.Errorf("attempt %d: negative delay %v", attempt, delay)
+		}
+	}
+}

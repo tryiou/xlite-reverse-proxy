@@ -60,6 +60,21 @@ const (
 
 	// Relay429MaxDelay is the maximum backoff cap for 429 retries.
 	Relay429MaxDelay = 5 * time.Second
+
+	// Relay429SingleServerBaseDelay is the initial backoff delay for 429 retries
+	// when the coin has only one server.  Longer delays maximize the chance of
+	// recovery since there is no fallback server.
+	Relay429SingleServerBaseDelay = 3 * time.Second
+
+	// Relay429SingleServerMaxDelay is the maximum backoff cap for single-server
+	// 429 retries.
+	Relay429SingleServerMaxDelay = 10 * time.Second
+
+	// Relay429SingleServerMaxRetries is the maximum number of 429-specific retries
+	// for single-server coins.  More retries with longer delays maximize recovery
+	// since there is no alternative server.
+	// The invariant is: Relay429SingleServerMaxRetries + 1 < RetryAttemptsDefault.
+	Relay429SingleServerMaxRetries = 3
 )
 
 // Constants for HTTP and networking

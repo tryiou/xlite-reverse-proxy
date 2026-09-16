@@ -323,6 +323,16 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 			// --- 429 Rate Limit: exponential backoff + retry same server ---
 			var rateLimitErr *RateLimitError
 			if errors.As(err, &rateLimitErr) {
+				// Use longer backoff for single-server coins to maximize recovery
+				// chance since there is no fallback server.
+				singleServer := servers.GetServerCountForCoin(coin) <= 1
+				baseDelay, maxDelay, maxRetries := Relay429BaseDelay, Relay429MaxDelay, Relay429MaxRetries
+				if singleServer {
+					baseDelay = Relay429SingleServerBaseDelay
+					maxDelay = Relay429SingleServerMaxDelay
+					maxRetries = Relay429SingleServerMaxRetries
+				}
+
 				if server.id == rateLimitServerID {
 					rateLimitRetries++
 				} else {
@@ -331,11 +341,11 @@ func retryWithRandomValidServer(rw http.ResponseWriter, req *http.Request, serve
 					rateLimitRetries = 1
 				}
 
-				if rateLimitRetries <= Relay429MaxRetries {
-					delay := computeRelay429Backoff(rateLimitRetries, rateLimitErr.RetryAfter)
+				if rateLimitRetries <= maxRetries {
+					delay := computeRelay429Backoff(rateLimitRetries, rateLimitErr.RetryAfter, baseDelay, maxDelay)
 					logPrefixed(LogPrefixRevProxy, " %s%s 429 rate limited, backoff %v (attempt %d/%d on server[%d])",
 						relayTag(requestData.Ip, coin, requestData.Method), serverTag(server.id),
-						delay, rateLimitRetries, Relay429MaxRetries, server.id)
+						delay, rateLimitRetries, maxRetries, server.id)
 					time.Sleep(delay)
 					// Retry the SAME server on the next iteration
 					reuseServerID = server.id
@@ -410,27 +420,27 @@ func parseRetryAfterHeader(header string) time.Duration {
 
 // computeRelay429Backoff calculates the exponential backoff delay for a 429 retry.
 // It uses the maximum of the backend's Retry-After hint and the computed
-// exponential delay, capped at Relay429MaxDelay.  ±20% jitter is applied
-// within the cap to prevent thundering-herd collisions across concurrent clients.
-func computeRelay429Backoff(attempt int, retryAfter time.Duration) time.Duration {
+// exponential delay, capped at maxDelay.  ±20% jitter is applied within the cap
+// to prevent thundering-herd collisions across concurrent clients.
+func computeRelay429Backoff(attempt int, retryAfter time.Duration, baseDelay, maxDelay time.Duration) time.Duration {
 	// Exponential component: base * 2^(attempt-1)
-	expDelay := Relay429BaseDelay * time.Duration(1<<(attempt-1))
+	expDelay := baseDelay * time.Duration(1<<(attempt-1))
 
 	// Use the larger of the backend's hint and our exponential backoff
 	delay := expDelay
 	if retryAfter > delay {
 		delay = retryAfter
 	}
-	if delay > Relay429MaxDelay {
-		delay = Relay429MaxDelay
+	if delay > maxDelay {
+		delay = maxDelay
 	}
 
 	// Apply ±20% jitter, clamped so the result never exceeds the cap
 	jitter := float64(delay) * 0.2
 	jitterOffset := time.Duration((rand.Float64()*2 - 1) * jitter)
 	delay += jitterOffset
-	if delay > Relay429MaxDelay {
-		delay = Relay429MaxDelay
+	if delay > maxDelay {
+		delay = maxDelay
 	}
 	if delay < 0 {
 		delay = 0

@@ -596,7 +596,7 @@ func TestParseRetryAfterHeader(t *testing.T) {
 
 func TestComputeRelay429Backoff(t *testing.T) {
 	t.Run("attempt 1 base delay with zero retry-after", func(t *testing.T) {
-		delay := computeRelay429Backoff(1, 0)
+		delay := computeRelay429Backoff(1, 0, Relay429BaseDelay, Relay429MaxDelay)
 		min := time.Duration(float64(Relay429BaseDelay) * 0.8)
 		max := time.Duration(float64(Relay429BaseDelay) * 1.2)
 		if delay < min || delay > max {
@@ -605,7 +605,7 @@ func TestComputeRelay429Backoff(t *testing.T) {
 	})
 
 	t.Run("attempt 2 doubles", func(t *testing.T) {
-		delay := computeRelay429Backoff(2, 0)
+		delay := computeRelay429Backoff(2, 0, Relay429BaseDelay, Relay429MaxDelay)
 		base := Relay429BaseDelay * 2
 		min := time.Duration(float64(base) * 0.8)
 		max := time.Duration(float64(base) * 1.2)
@@ -616,7 +616,7 @@ func TestComputeRelay429Backoff(t *testing.T) {
 
 	t.Run("retry-after larger than exponential is capped", func(t *testing.T) {
 		retryAfter := 5 * time.Second
-		delay := computeRelay429Backoff(1, retryAfter)
+		delay := computeRelay429Backoff(1, retryAfter, Relay429BaseDelay, Relay429MaxDelay)
 		// retryAfter exceeds cap, so delay is capped at Relay429MaxDelay ± 20%
 		min := time.Duration(float64(Relay429MaxDelay) * 0.8)
 		max := Relay429MaxDelay
@@ -627,7 +627,7 @@ func TestComputeRelay429Backoff(t *testing.T) {
 
 	t.Run("result never exceeds max delay", func(t *testing.T) {
 		for attempt := 1; attempt <= 20; attempt++ {
-			delay := computeRelay429Backoff(attempt, 10*time.Second)
+			delay := computeRelay429Backoff(attempt, 10*time.Second, Relay429BaseDelay, Relay429MaxDelay)
 			if delay > Relay429MaxDelay {
 				t.Errorf("attempt %d: delay %v exceeds max %v", attempt, delay, Relay429MaxDelay)
 			}
@@ -636,7 +636,7 @@ func TestComputeRelay429Backoff(t *testing.T) {
 
 	t.Run("result is never negative", func(t *testing.T) {
 		for attempt := 1; attempt <= 20; attempt++ {
-			delay := computeRelay429Backoff(attempt, 0)
+			delay := computeRelay429Backoff(attempt, 0, Relay429BaseDelay, Relay429MaxDelay)
 			if delay < 0 {
 				t.Errorf("attempt %d: negative delay %v", attempt, delay)
 			}
@@ -941,10 +941,11 @@ func TestRetryWithRandomValidServer_SingleServer429Exhausted(t *testing.T) {
 	assert.Error(t, err, "should return error when all retries exhausted")
 	assert.Nil(t, server, "should return nil server on exhaustion")
 	assert.Contains(t, err.Error(), "failed after", "error should indicate retries were exhausted")
-	// With Relay429MaxRetries=2: server[1] called 3 times (initial + 2 backoffs),
-	// then exclusion finds no other servers → permanentStop. No more backend calls.
-	assert.Equal(t, Relay429MaxRetries+1, callCount,
-		"server[1] should be called exactly Relay429MaxRetries+1 times before exclusion fails")
+	// Single-server coin: uses Relay429SingleServerMaxRetries=3, so server[1]
+	// is called 4 times (initial + 3 backoffs), then exclusion finds no other
+	// servers → permanentStop. No more backend calls.
+	assert.Equal(t, Relay429SingleServerMaxRetries+1, callCount,
+		"server[1] should be called exactly Relay429SingleServerMaxRetries+1 times before exclusion fails")
 }
 
 // Test 5: Full integration through reverseProxyHandler with 429 then success.
@@ -1122,4 +1123,73 @@ func TestRetryWithRandomValidServer_TwoServersBoth429(t *testing.T) {
 	}
 
 	assert.True(t, sawExclusionPath, "should have seen server[1]-first exclusion path")
+}
+
+// TestRetryWithRandomValidServer_SingleServerLongerBackoff verifies that a
+// single-server coin uses longer backoff delays (Relay429SingleServerBaseDelay)
+// and more retries (Relay429SingleServerMaxRetries) than the multi-server path.
+func TestRetryWithRandomValidServer_SingleServerLongerBackoff(t *testing.T) {
+	log.Printf("TEST_UNIT: Starting TestRetryWithRandomValidServer_SingleServerLongerBackoff")
+
+	callCount := 0
+
+	// Backend that always returns 429 — single server can't fall back
+	backend429 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"rate limit"}`)
+	}))
+	defer backend429.Close()
+
+	servers := &Servers{
+		// Single server for BTC — triggers longer backoff path
+		GlobalCoinServerIDs: fastjson.MustParse(`{"BTC":{"ids":[1]}}`),
+		Slice: []*Server{
+			{id: 1, url: backend429.URL, exr: true},
+		},
+	}
+
+	globalConfig.config = &Config{
+		AcceptedMethods:         []string{"validmethod"},
+		AcceptedPaths:           []string{"/"},
+		HttpTimeout:             5,
+		RateLimit:               100,
+		ConsensusThreshold:      0.6,
+		DynlistServersProviders: []string{},
+		MaxLogSize:              1048576,
+	}
+	defer setTestHTTPClient(5)()
+	resetLogThrottleState()
+	t.Cleanup(resetLogThrottleState)
+
+	requestData := RequestData{Method: "validmethod", Params: []interface{}{"BTC"}, Coin: "BTC", Ip: "127.0.0.1"}
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(
+		`{"method":"validmethod","params":["BTC"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:12345"
+
+	w := httptest.NewRecorder()
+
+	// Start timer to measure total backoff duration
+	start := time.Now()
+	_, err := retryWithRandomValidServer(w, req, servers, "BTC", &requestData, RetryAttemptsDefault)
+	elapsed := time.Since(start)
+
+	assert.Error(t, err, "should return error — single server always 429")
+
+	// With Relay429SingleServerMaxRetries=3, server[1] should be called
+	// exactly Relay429SingleServerMaxRetries+1 times (1 initial + 3 backoff retries)
+	assert.Equal(t, Relay429SingleServerMaxRetries+1, callCount,
+		"single-server: server[1] should be called Relay429SingleServerMaxRetries+1 times")
+
+	// Total backoff should be roughly:
+	// attempt 1: ~3s, attempt 2: ~6s, attempt 3: ~10s = ~19s total
+	// Minimum: 3 * 0.8 + 6 * 0.8 + 10 * 0.8 = 15.2s
+	// (Allow generous tolerance for jitter + test overhead)
+	minExpected := time.Duration(float64(Relay429SingleServerBaseDelay+Relay429SingleServerBaseDelay*2+Relay429SingleServerMaxDelay) * 0.5)
+	if elapsed < minExpected {
+		t.Errorf("elapsed %v is too short for single-server backoff (expected >= %v)", elapsed, minExpected)
+	}
 }

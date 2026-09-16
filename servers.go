@@ -403,6 +403,20 @@ func (servers *Servers) removeNonConsensusServersFromGlobalList(nonConsensusMap 
 	}
 }
 
+// GetServerCountForCoin returns the number of servers configured for a coin.
+// Returns 0 if the coin is not found or has no servers.
+func (servers *Servers) GetServerCountForCoin(coin string) int {
+	coinObj := servers.GlobalCoinServerIDs.GetObject(coin)
+	if coinObj == nil {
+		return 0
+	}
+	idsArray := coinObj.Get("ids")
+	if idsArray == nil {
+		return 0
+	}
+	return len(idsArray.GetArray())
+}
+
 // GetRandomValidServerID selects a random, healthy server for a given coin from the list of
 // servers that are in consensus. Optional excludeServerID(s) are filtered out before
 // selection — used by the 429 retry logic to avoid re-picking a server that just
