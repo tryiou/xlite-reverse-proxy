@@ -21,8 +21,8 @@ type Application struct {
 func NewApplication() *Application {
 	return &Application{
 		configManager: &globalConfig,
-		wg:           &sync.WaitGroup{},
-		shutdown:     make(chan struct{}),
+		wg:            &sync.WaitGroup{},
+		shutdown:      make(chan struct{}),
 	}
 }
 
@@ -31,7 +31,7 @@ func (a *Application) Initialize(configFile string) error {
 	if a.configManager == nil {
 		return fmt.Errorf("config manager not initialized")
 	}
-	
+
 	if err := a.configManager.Load(configFile); err != nil {
 		return err
 	}

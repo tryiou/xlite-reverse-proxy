@@ -7,7 +7,6 @@ import (
 	"regexp"
 )
 
-
 // Validator manages validation state and errors
 type Validator struct {
 	errors []ValidationError

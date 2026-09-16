@@ -24,8 +24,8 @@ type Server struct {
 	getheights          *fastjson.Value
 	coinsMap            map[string]Coin
 	hashesStorage       map[string]map[int]string
-	consecutiveFailures int           // tracks consecutive failures for exponential backoff
-	nextRetryAt         time.Time     // when this server is eligible for retry after backoff
+	consecutiveFailures int       // tracks consecutive failures for exponential backoff
+	nextRetryAt         time.Time // when this server is eligible for retry after backoff
 	//                coins   heights hashes
 }
 
